@@ -4,33 +4,45 @@ import time
 PORT = "/dev/ttyUSB0"
 BAUD = 2_000_000
 
-ser = serial.Serial(PORT, BAUD, timeout=0.1)
+ser = serial.Serial(PORT, BAUD, timeout=1)
 print("Opened:", ser.portstr)
 
-def read_packet(ser, timeout=1.0):
-    start = time.time()
-    buf = bytearray()
+# -----------------------------
+# SET + START (OBLIGATORIO)
+# -----------------------------
+set_can = [
+    0xAA, 0x55,
+    0x12,       # variable length
+    0x03,       # 500 kbps
+    0x01,       # standard frame
+    0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+    0x00,
+    0x00,
+    0x00, 0x00, 0x00, 0x00
+]
 
-    while time.time() - start < timeout:
-        b = ser.read(1)
-        if not b:
-            continue
+checksum = sum(set_can[2:]) & 0xFF
+set_can.append(checksum)
 
-        if not buf:
-            if b[0] == 0xAA:
-                buf.append(b[0])
-        else:
-            buf.append(b[0])
-            if b[0] == 0x55:
-                return bytes(buf)
+ser.write(bytes(set_can))
+print("SET+START sent")
+time.sleep(0.5)
 
-    return None
+# -----------------------------
+# DUMMY CAN FRAME (TX)
+# -----------------------------
+pkt = bytes([
+    0xAA,
+    0xE1,       # TX, DLC=1
+    0x01, 0x00, # CAN ID = 1
+    0x00,       # DATA dummy
+    0x55
+])
 
-# Escuchar RX durante 2 segundos
-end = time.time() + 2.0
-while time.time() < end:
-    pkt = read_packet(ser)
-    if pkt:
-        print("RX PKT:", pkt.hex())
+ser.write(pkt)
+print("DUMMY TX sent")
 
+time.sleep(1)
 ser.close()
+print("Done")
