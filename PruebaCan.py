@@ -1,6 +1,6 @@
 import serial
 
-ser = serial.Serial("/dev/ttyUSB1", 2000000)
+ser = serial.Serial("/dev/ttyUSB0", 2000000)
 
 send_read_speed = bytes([
     0xAA,
