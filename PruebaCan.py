@@ -10,7 +10,7 @@ BAUDRATE = 2000000
 # =====================================================
 # PARÁMETROS DE CONTROL
 # =====================================================
-CAN_ID = 0x01      # Número de motor (1–2047)
+CAN_ID = 0x02      # Número de motor (1–2047)
 SPEED_RPM = 1000    # Velocidad en RPM (0–3000)
 ACC = 2            # Aceleración (0–255)
 DIR = 0            # 0 = CW, 1 = CCW
