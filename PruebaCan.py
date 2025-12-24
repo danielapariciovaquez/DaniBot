@@ -7,41 +7,70 @@ import time
 PORT = "/dev/ttyUSB0"
 BAUDRATE = 2000000
 
+# =====================================================
+# PARÁMETROS DE CONTROL
+# =====================================================
+CAN_ID = 0x01      # Número de motor (1–2047)
+SPEED_RPM = 100    # Velocidad en RPM (0–3000)
+ACC = 2            # Aceleración (0–255)
+DIR = 0            # 0 = CW, 1 = CCW
+
+# =====================================================
+# ABRIR PUERTO
+# =====================================================
 ser = serial.Serial(PORT, BAUDRATE)
 print("USB-CAN abierto en:", ser.portstr)
-
 time.sleep(0.2)
 
 # =====================================================
-# COMANDO: GIRAR A 100 RPM (F6)
+# CONSTRUIR COMANDO F6 (SPEED MODE)
 # =====================================================
-# ID = 0x01
-# speed = 100 RPM
-# acc = 2
-# dir = CW
+# Velocidad en 12 bits
+speed = SPEED_RPM & 0x0FFF
 
-send_speed_100rpm = bytes([
-    0xAA,       # Header
-    0xC5,       # Variable protocol, standard frame, data frame, DLC=5
-    0x01,       # CAN ID low byte
-    0x00,       # CAN ID high byte
-    0xF6,       # Speed mode command
-    0x00,       # Dir=0 (CW) + speed high nibble
-    0x64,       # Speed low byte (100 RPM)
-    0x02,       # Acceleration
-    0x5D,       # CRC
-    0x55        # End frame
+byte2 = ((DIR & 0x01) << 7) | ((speed >> 8) & 0x0F)
+byte3 = speed & 0xFF
+
+# Datos CAN
+data = [
+    0xF6,   # Comando speed mode
+    byte2,
+    byte3,
+    ACC
+]
+
+# =====================================================
+# CÁLCULO CRC SERVO42D
+# CRC = (CAN_ID + sum(DATA)) & 0xFF
+# =====================================================
+crc = (CAN_ID + sum(data)) & 0xFF
+
+# =====================================================
+# TRAMA USB-CAN
+# FrameControl = 0xC5 (DLC=5, protocolo variable, standard frame)
+# =====================================================
+frame = bytes([
+    0xAA,
+    0xC5,                  # <-- FIJO, como en el código que funciona
+    CAN_ID & 0xFF,         # CAN ID low
+    (CAN_ID >> 8) & 0xFF,  # CAN ID high
+] + data + [
+    crc,
+    0x55
 ])
 
-print("Enviando comando: 100 RPM")
-ser.write(send_speed_100rpm)
+# =====================================================
+# ENVÍO
+# =====================================================
+print(f"Motor {CAN_ID} → {SPEED_RPM} RPM")
+ser.write(frame)
 
 # =====================================================
-# LECTURA RAW DE RESPUESTA (opcional)
+# LECTURA RX (OPCIONAL)
 # =====================================================
 time.sleep(0.1)
 if ser.in_waiting:
-    data = ser.read(ser.in_waiting)
-    print("RX:", [hex(b) for b in data])
+    rx = ser.read(ser.in_waiting)
+    print("RX:", [hex(b) for b in rx])
 
 ser.close()
