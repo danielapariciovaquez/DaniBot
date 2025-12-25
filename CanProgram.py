@@ -14,7 +14,7 @@ MOTOR_LEFT  = [0x03, 0x04]
 
 MAX_RPM = 300      # velocidad máxima permitida
 ACC = 200            # aceleración fija
-DEADZONE = 0.01    # zona muerta del stick
+DEADZONE = 0.08    # zona muerta del stick
 SEND_PERIOD = 0.05 # 20 Hz
 
 # =====================================================
