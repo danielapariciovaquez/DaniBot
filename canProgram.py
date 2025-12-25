@@ -11,9 +11,9 @@ CAN_BAUD = 2000000
 MOTOR_RIGHT = [0x01, 0x02]
 MOTOR_LEFT  = [0x03, 0x04]
 
-MAX_RPM = 300
-ACC = 2
-DEADZONE = 0.01
+MAX_RPM = 500
+ACC = 240
+DEADZONE = 0.001
 SEND_PERIOD = 0.05   # 20 Hz
 
 # =====================================================
@@ -88,7 +88,7 @@ try:
         # LECTURA DE EJES (según tu indicación)
         # ---------------------------------------------
         axis_speed = -joy.get_axis(1)   # eje 1 → velocidad (adelante +)
-        axis_turn  =  joy.get_axis(3)   # eje 3 → dirección
+        axis_turn  =  joy.get_axis(3)/4   # eje 3 → dirección
 
         axis_speed = apply_deadzone(axis_speed, DEADZONE)
         axis_turn  = apply_deadzone(axis_turn, DEADZONE)
