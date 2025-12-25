@@ -14,7 +14,7 @@ MOTOR_LEFT  = [0x03, 0x04]
 MAX_RPM = 800
 ACC = 252
 DEADZONE = 0.001
-SEND_PERIOD = 0.05   # 20 Hz
+SEND_PERIOD = 0.02   # 20 Hz
 
 # Factores de velocidad
 SLOW_FACTOR = 0.1    # L1
