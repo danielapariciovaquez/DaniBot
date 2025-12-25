@@ -13,8 +13,8 @@ MOTOR_RIGHT = [0x01, 0x02]
 MOTOR_LEFT  = [0x03, 0x04]
 
 MAX_RPM = 300      # velocidad máxima permitida
-ACC = 2            # aceleración fija
-DEADZONE = 0.08    # zona muerta del stick
+ACC = 200            # aceleración fija
+DEADZONE = 0.01    # zona muerta del stick
 SEND_PERIOD = 0.05 # 20 Hz
 
 # =====================================================
@@ -86,7 +86,7 @@ try:
 
         # Stick izquierdo
         axis_y = -joy.get_axis(1)  # adelante positivo
-        axis_x =  joy.get_axis(0)  # giro
+        axis_x =  joy.get_axis(2)/4  # giro
 
         # Deadzone
         if abs(axis_y) < DEADZONE:
