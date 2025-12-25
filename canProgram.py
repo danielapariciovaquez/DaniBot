@@ -1,7 +1,6 @@
 import serial
 import time
 import pygame
-import math
 
 # =====================================================
 # CONFIGURACIÓN GENERAL
@@ -12,10 +11,10 @@ CAN_BAUD = 2000000
 MOTOR_RIGHT = [0x01, 0x02]
 MOTOR_LEFT  = [0x03, 0x04]
 
-MAX_RPM = 300      # velocidad máxima permitida
-ACC = 200            # aceleración fija
-DEADZONE = 0.08    # zona muerta del stick
-SEND_PERIOD = 0.05 # 20 Hz
+MAX_RPM = 300
+ACC = 2
+DEADZONE = 0.01
+SEND_PERIOD = 0.05   # 20 Hz
 
 # =====================================================
 # FUNCIONES AUXILIARES
@@ -23,11 +22,12 @@ SEND_PERIOD = 0.05 # 20 Hz
 def clamp(val, vmin, vmax):
     return max(vmin, min(vmax, val))
 
+def apply_deadzone(x, dz):
+    if abs(x) < dz:
+        return 0.0
+    return x
+
 def send_speed(ser, can_id, rpm):
-    """
-    Envía comando F6 a un motor concreto.
-    Basado 100% en el frame validado.
-    """
     dir_bit = 0
     if rpm < 0:
         dir_bit = 1
@@ -84,19 +84,20 @@ try:
     while True:
         pygame.event.pump()
 
-        # Stick izquierdo
-        axis_y = -joy.get_axis(1)  # adelante positivo
-        axis_x =  joy.get_axis(2)/4  # giro
+        # ---------------------------------------------
+        # LECTURA DE EJES (según tu indicación)
+        # ---------------------------------------------
+        axis_speed = -joy.get_axis(1)   # eje 1 → velocidad (adelante +)
+        axis_turn  =  joy.get_axis(3)   # eje 3 → dirección
 
-        # Deadzone
-        if abs(axis_y) < DEADZONE:
-            axis_y = 0.0
-        if abs(axis_x) < DEADZONE:
-            axis_x = 0.0
+        axis_speed = apply_deadzone(axis_speed, DEADZONE)
+        axis_turn  = apply_deadzone(axis_turn, DEADZONE)
 
-        # Mezcla skid steering
-        v = axis_y
-        w = axis_x
+        # ---------------------------------------------
+        # MEZCLA SKID STEERING
+        # ---------------------------------------------
+        v = axis_speed
+        w = axis_turn
 
         left_cmd  = clamp(v + w, -1.0, 1.0)
         right_cmd = clamp(v - w, -1.0, 1.0)
@@ -104,7 +105,9 @@ try:
         left_rpm  = left_cmd  * MAX_RPM
         right_rpm = right_cmd * MAX_RPM
 
-        # Envío periódico
+        # ---------------------------------------------
+        # ENVÍO PERIÓDICO
+        # ---------------------------------------------
         now = time.time()
         if now - last_send >= SEND_PERIOD:
             for mid in MOTOR_LEFT:
@@ -119,10 +122,8 @@ try:
 except KeyboardInterrupt:
     print("Parando vehículo...")
 
-    # Parada limpia
     for mid in MOTOR_LEFT + MOTOR_RIGHT:
         send_speed(ser, mid, 0)
 
     ser.close()
     pygame.quit()
-#this is a Python program for controlling the DaniBot with Servo42d Can version motors
