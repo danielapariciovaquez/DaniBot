@@ -100,7 +100,7 @@ try:
         w = axis_turn
 
         left_cmd  = clamp(v + w, -1.0, 1.0)
-        right_cmd = clamp(v - w, -1.0, 1.0)
+        right_cmd = -clamp(v - w, -1.0, 1.0)
 
         left_rpm  = left_cmd  * MAX_RPM
         right_rpm = right_cmd * MAX_RPM
