@@ -11,14 +11,14 @@ CAN_BAUD = 2000000
 MOTOR_RIGHT = [0x01, 0x02]
 MOTOR_LEFT  = [0x03, 0x04]
 
-MAX_RPM = 500
+MAX_RPM = 1000
 ACC = 240
 DEADZONE = 0.001
 SEND_PERIOD = 0.05   # 20 Hz
 
 # Factores de velocidad
-SLOW_FACTOR = 0.4    # L1
-FAST_FACTOR = 1.5    # R1
+SLOW_FACTOR = 0.1    # L1
+FAST_FACTOR = 4   # R1
 
 # Botones mando Xbox
 BTN_START = 7
