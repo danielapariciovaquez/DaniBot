@@ -11,10 +11,19 @@ CAN_BAUD = 2000000
 MOTOR_RIGHT = [0x01, 0x02]
 MOTOR_LEFT  = [0x03, 0x04]
 
-MAX_RPM = 1000
+MAX_RPM = 500
 ACC = 240
 DEADZONE = 0.001
 SEND_PERIOD = 0.05   # 20 Hz
+
+# Factores de velocidad
+SLOW_FACTOR = 0.4    # L1
+FAST_FACTOR = 1.5    # R1
+
+# Botones mando Xbox
+BTN_START = 7
+BTN_L1 = 4
+BTN_R1 = 5
 
 # =====================================================
 # FUNCIONES AUXILIARES
@@ -76,6 +85,12 @@ joy.init()
 print("Mando detectado:", joy.get_name())
 
 # =====================================================
+# ESTADO DE SEGURIDAD
+# =====================================================
+motors_enabled = False
+prev_start_state = 0
+
+# =====================================================
 # LOOP PRINCIPAL
 # =====================================================
 last_send = 0
@@ -85,13 +100,31 @@ try:
         pygame.event.pump()
 
         # ---------------------------------------------
-        # LECTURA DE EJES (según tu indicación)
+        # GESTIÓN BOTÓN START (TOGGLE ENABLE)
         # ---------------------------------------------
-        axis_speed = -joy.get_axis(1)   # eje 1 → velocidad (adelante +)
-        axis_turn  =  joy.get_axis(3)/4   # eje 3 → dirección
+        start_state = joy.get_button(BTN_START)
+        if start_state == 1 and prev_start_state == 0:
+            motors_enabled = not motors_enabled
+            print("MOTORES", "HABILITADOS" if motors_enabled else "DESHABILITADOS")
+        prev_start_state = start_state
+
+        # ---------------------------------------------
+        # LECTURA DE EJES
+        # ---------------------------------------------
+        axis_speed = -joy.get_axis(1)
+        axis_turn  =  joy.get_axis(3) / 4
 
         axis_speed = apply_deadzone(axis_speed, DEADZONE)
         axis_turn  = apply_deadzone(axis_turn, DEADZONE)
+
+        # ---------------------------------------------
+        # FACTOR DE VELOCIDAD (L1 / R1)
+        # ---------------------------------------------
+        speed_factor = 1.0
+        if joy.get_button(BTN_L1):
+            speed_factor = SLOW_FACTOR
+        elif joy.get_button(BTN_R1):
+            speed_factor = FAST_FACTOR
 
         # ---------------------------------------------
         # MEZCLA SKID STEERING
@@ -100,20 +133,26 @@ try:
         w = axis_turn
 
         left_cmd  = -clamp(v + w, -1.0, 1.0)
-        right_cmd = clamp(v - w, -1.0, 1.0)
+        right_cmd =  clamp(v - w, -1.0, 1.0)
 
-        left_rpm  = left_cmd  * MAX_RPM
-        right_rpm = right_cmd * MAX_RPM
+        left_rpm  = left_cmd  * MAX_RPM * speed_factor
+        right_rpm = right_cmd * MAX_RPM * speed_factor
 
         # ---------------------------------------------
         # ENVÍO PERIÓDICO
         # ---------------------------------------------
         now = time.time()
         if now - last_send >= SEND_PERIOD:
-            for mid in MOTOR_LEFT:
-                send_speed(ser, mid, left_rpm)
-            for mid in MOTOR_RIGHT:
-                send_speed(ser, mid, right_rpm)
+
+            if motors_enabled:
+                for mid in MOTOR_LEFT:
+                    send_speed(ser, mid, left_rpm)
+                for mid in MOTOR_RIGHT:
+                    send_speed(ser, mid, right_rpm)
+            else:
+                # Seguridad: forzar paro
+                for mid in MOTOR_LEFT + MOTOR_RIGHT:
+                    send_speed(ser, mid, 0)
 
             last_send = now
 
