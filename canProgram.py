@@ -12,9 +12,9 @@ MOTOR_LEFT  = [0x03, 0x04]
 MOTOR_RIGHT = [0x01, 0x02]
 
 MAX_RPM = 500
-ACC = 240
+ACC = 0
 DEADZONE = 0.01
-SEND_PERIOD = 0.05   # 20 Hz
+SEND_PERIOD = 0.02   # 20 Hz
 
 # =====================================================
 # AUX
