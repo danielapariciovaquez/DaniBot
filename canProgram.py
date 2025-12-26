@@ -38,7 +38,7 @@ def apply_deadzone(x, dz):
     return 0.0 if abs(x) < dz else x
 
 # -----------------------------------------------------
-# Envío F6: control de velocidad (speed mode)
+# Envío F6: control de velocidad
 # -----------------------------------------------------
 def send_speed(ser, can_id, rpm):
     direction = 0
@@ -67,7 +67,7 @@ def send_speed(ser, can_id, rpm):
     ser.write(frame)
 
 # -----------------------------------------------------
-# Envío F3: enable / disable real del driver
+# Envío F3: enable / disable motor
 # -----------------------------------------------------
 def send_enable(ser, can_id, enable):
     en = 0x01 if enable else 0x00
@@ -76,7 +76,7 @@ def send_enable(ser, can_id, enable):
 
     frame = bytes([
         0xAA,
-        0xC2,                       # DLC = 2  (CORRECTO)
+        0xC2,                       # ✅ DLC = 2 (BUG CORREGIDO)
         can_id & 0xFF,
         (can_id >> 8) & 0xFF,
         *data,
@@ -120,33 +120,19 @@ try:
         pygame.event.pump()
 
         # ---------------------------------------------
-        # BOTÓN START → ENABLE / DISABLE REAL
+        # BOTÓN START → ENABLE / DISABLE
         # ---------------------------------------------
         start = joy.get_button(BTN_START)
         if start == 1 and prev_start == 0:
             motors_enabled = not motors_enabled
             print("MOTORES", "ENABLE" if motors_enabled else "DISABLE")
 
-            if not motors_enabled:
-                # ---- SECUENCIA CORRECTA DE DESACTIVACIÓN ----
-                # 1) Salir del modo speed (F6 a 0)
-                for _ in range(2):
-                    for mid in ALL_MOTORS:
-                        send_speed(ser, mid, 0)
-                    time.sleep(0.03)
-
-                # 2) Disable real del driver
-                for _ in range(2):
-                    for mid in ALL_MOTORS:
-                        send_enable(ser, mid, False)
-                    time.sleep(0.03)
-
-            else:
-                # ---- SECUENCIA DE ACTIVACIÓN ----
-                for _ in range(2):
-                    for mid in ALL_MOTORS:
-                        send_enable(ser, mid, True)
-                    time.sleep(0.03)
+            # Transición segura: parar + F3 correcto
+            for _ in range(3):
+                for mid in ALL_MOTORS:
+                    send_speed(ser, mid, 0)
+                    send_enable(ser, mid, motors_enabled)
+                time.sleep(0.02)
 
             prev_start = start
             continue
@@ -193,17 +179,11 @@ try:
 except KeyboardInterrupt:
     print("SALIDA SEGURA: deshabilitando motores")
 
-    # Salida limpia del modo speed
-    for _ in range(2):
+    for _ in range(3):
         for mid in ALL_MOTORS:
             send_speed(ser, mid, 0)
-        time.sleep(0.03)
-
-    # Disable real
-    for _ in range(2):
-        for mid in ALL_MOTORS:
             send_enable(ser, mid, False)
-        time.sleep(0.03)
+        time.sleep(0.02)
 
     ser.close()
     pygame.quit()
