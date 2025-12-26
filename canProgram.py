@@ -128,11 +128,17 @@ try:
             print("MOTORES", "ENABLE" if motors_enabled else "DISABLE")
 
             # Transición segura: parar + F3 correcto
-            for _ in range(3):
-                for mid in ALL_MOTORS:
-                    send_speed(ser, mid, 0)
-                    send_enable(ser, mid, motors_enabled)
-                time.sleep(0.02)
+            # Salida limpia del modo speed + disable real
+        for _ in range(2):
+            for mid in ALL_MOTORS:
+                send_speed(ser, mid, 0)
+            time.sleep(0.03)
+        
+        for _ in range(2):
+            for mid in ALL_MOTORS:
+                send_enable(ser, mid, False)
+            time.sleep(0.03)
+
 
             prev_start = start
             continue
