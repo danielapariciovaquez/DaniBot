@@ -21,7 +21,7 @@ SEND_PERIOD = 0.05   # 20 Hz
 
 # Factores de velocidad
 SLOW_FACTOR = 0.4
-FAST_FACTOR = 1.5
+FAST_FACTOR = 2
 
 # Botones mando Xbox
 BTN_START = 7
@@ -157,7 +157,7 @@ try:
         # LECTURA DE EJES
         # ---------------------------------------------
         v = apply_deadzone(-joy.get_axis(1), DEADZONE)
-        w = apply_deadzone( joy.get_axis(3) / 4, DEADZONE)
+        w = apply_deadzone( joy.get_axis(3) / 2, DEADZONE)
 
         # ---------------------------------------------
         # FACTOR DE VELOCIDAD (L1 / R1)
