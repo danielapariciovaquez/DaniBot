@@ -1,20 +1,6 @@
-#!/usr/bin/python3
-# =====================================================
-# DaniBot – Control CAN con mando Xbox (modo seguro)
-# =====================================================
-
-import os
-import sys
-import time
-import signal
 import serial
+import time
 import pygame
-
-# =====================================================
-# PYGAME EN MODO HEADLESS (OBLIGATORIO EN BACKGROUND)
-# =====================================================
-os.environ["SDL_VIDEODRIVER"] = "dummy"
-os.environ["SDL_AUDIODRIVER"] = "dummy"
 
 # =====================================================
 # CONFIGURACIÓN GENERAL
@@ -25,14 +11,14 @@ CAN_BAUD = 2000000
 MOTOR_RIGHT = [0x01, 0x02]
 MOTOR_LEFT  = [0x03, 0x04]
 
-MAX_RPM = 800
-ACC = 252
+MAX_RPM = 500
+ACC = 240
 DEADZONE = 0.001
-SEND_PERIOD = 0.02   # 50 Hz
+SEND_PERIOD = 0.05   # 20 Hz
 
 # Factores de velocidad
-SLOW_FACTOR = 0.1    # L1
-FAST_FACTOR = 4.0    # R1
+SLOW_FACTOR = 0.4
+FAST_FACTOR = 1.5
 
 # Botones mando Xbox
 BTN_START = 7
@@ -67,7 +53,25 @@ def send_speed(ser, can_id, rpm):
 
     frame = bytes([
         0xAA,
-        0xC5,
+        0xC5,                      # DLC=5
+        can_id & 0xFF,
+        (can_id >> 8) & 0xFF,
+        *data,
+        crc,
+        0x55
+    ])
+
+    ser.write(frame)
+
+def send_enable(ser, can_id, enable):
+    en_byte = 0x01 if enable else 0x00
+
+    data = [0xF3, en_byte]
+    crc = (can_id + sum(data)) & 0xFF
+
+    frame = bytes([
+        0xAA,
+        0xC3,                      # DLC=3
         can_id & 0xFF,
         (can_id >> 8) & 0xFF,
         *data,
@@ -78,38 +82,10 @@ def send_speed(ser, can_id, rpm):
     ser.write(frame)
 
 # =====================================================
-# PARADA SEGURA CENTRALIZADA
-# =====================================================
-def stop_all_motors():
-    try:
-        for mid in MOTOR_LEFT + MOTOR_RIGHT:
-            send_speed(ser, mid, 0)
-    except Exception:
-        pass
-
-# =====================================================
-# HANDLER DE SEÑALES (systemd / kill / reboot)
-# =====================================================
-def signal_handler(signum, frame):
-    print(f"Señal {signum} recibida → parada segura")
-    stop_all_motors()
-    try:
-        ser.close()
-    except Exception:
-        pass
-    pygame.quit()
-    sys.exit(0)
-
-signal.signal(signal.SIGTERM, signal_handler)
-signal.signal(signal.SIGINT,  signal_handler)
-signal.signal(signal.SIGHUP,  signal_handler)
-
-# =====================================================
 # INICIALIZAR CAN
 # =====================================================
-print("Inicializando USB-CAN...")
-ser = serial.Serial(CAN_PORT, CAN_BAUD, timeout=0.1)
-time.sleep(0.3)
+ser = serial.Serial(CAN_PORT, CAN_BAUD)
+time.sleep(0.2)
 print("USB-CAN listo")
 
 # =====================================================
@@ -119,7 +95,7 @@ pygame.init()
 pygame.joystick.init()
 
 if pygame.joystick.get_count() == 0:
-    raise RuntimeError("No se detecta ningún mando Xbox")
+    raise RuntimeError("No se detecta ningún mando")
 
 joy = pygame.joystick.Joystick(0)
 joy.init()
@@ -131,35 +107,46 @@ print("Mando detectado:", joy.get_name())
 # =====================================================
 motors_enabled = False
 prev_start_state = 0
-last_send = 0
 
 # =====================================================
 # LOOP PRINCIPAL
 # =====================================================
+last_send = 0
+
 try:
     while True:
         pygame.event.pump()
 
         # ---------------------------------------------
-        # BOTÓN START (TOGGLE ENABLE)
+        # BOTÓN START → ENABLE / DISABLE REAL
         # ---------------------------------------------
         start_state = joy.get_button(BTN_START)
         if start_state == 1 and prev_start_state == 0:
             motors_enabled = not motors_enabled
-            print("MOTORES", "HABILITADOS" if motors_enabled else "DESHABILITADOS")
+
+            if motors_enabled:
+                print("MOTORES ENABLE")
+                for mid in MOTOR_LEFT + MOTOR_RIGHT:
+                    send_enable(ser, mid, True)
+            else:
+                print("MOTORES DISABLE")
+                for mid in MOTOR_LEFT + MOTOR_RIGHT:
+                    send_speed(ser, mid, 0)
+                    send_enable(ser, mid, False)
+
         prev_start_state = start_state
 
         # ---------------------------------------------
         # LECTURA DE EJES
         # ---------------------------------------------
-        axis_speed = -joy.get_axis(1)
-        axis_turn  =  joy.get_axis(3) / 4.0
+        axis_speed = -joy.get_axis(1)       # eje 1
+        axis_turn  =  joy.get_axis(3) / 4   # eje 3
 
         axis_speed = apply_deadzone(axis_speed, DEADZONE)
         axis_turn  = apply_deadzone(axis_turn, DEADZONE)
 
         # ---------------------------------------------
-        # FACTOR DE VELOCIDAD
+        # FACTOR DE VELOCIDAD (L1 / R1)
         # ---------------------------------------------
         speed_factor = 1.0
         if joy.get_button(BTN_L1):
@@ -168,7 +155,7 @@ try:
             speed_factor = FAST_FACTOR
 
         # ---------------------------------------------
-        # MEZCLA SKID-STEERING
+        # MEZCLA SKID STEERING
         # ---------------------------------------------
         v = axis_speed
         w = axis_turn
@@ -191,24 +178,23 @@ try:
                 for mid in MOTOR_RIGHT:
                     send_speed(ser, mid, right_rpm)
             else:
-                stop_all_motors()
+                for mid in MOTOR_LEFT + MOTOR_RIGHT:
+                    send_speed(ser, mid, 0)
 
             last_send = now
 
         time.sleep(0.005)
 
-# =====================================================
-# GESTIÓN DE ERRORES
-# =====================================================
-except Exception as e:
-    print("ERROR CRÍTICO:", e)
-    raise
+except KeyboardInterrupt:
+    print("Cerrando programa: DISABLE motores")
 
-finally:
-    print("Finalizando → parada segura")
-    stop_all_motors()
-    try:
-        ser.close()
-    except Exception:
-        pass
+    motors_enabled = False
+    for mid in MOTOR_LEFT + MOTOR_RIGHT:
+        send_speed(ser, mid, 0)
+        send_enable(ser, mid, False)
+
+    time.sleep(0.1)
+    ser.close()
     pygame.quit()
+
+    print("Programa cerrado en estado seguro.")
