@@ -5,36 +5,39 @@ import pygame
 # =====================================================
 # CONFIGURACIÓN GENERAL
 # =====================================================
-CAN_PORT = "/dev/ttyUSB0"
-SERIAL_BAUD = 2000000     # enlace serie al USB-CAN
+PORT = "/dev/ttyUSB0"
+SERIAL_BAUD = 2000000     # baudrate del enlace serie USB-CAN
 
 # =====================================================
 # CONFIGURACIÓN DE CORRIENTE
 # =====================================================
-WORK_CURRENT_MA = 3000    # mA (SERVO42D máx 3000)
-HOLDING_PERCENT = 10     # 10,20,...,90 %
+WORK_CURRENT_MA = 300     # mA
+HOLDING_PERCENT = 10      # %
 
 # =====================================================
-# MAPEOS
+# IDs DE MOTORES
 # =====================================================
 MOTOR_LEFT  = [0x03, 0x04]
 MOTOR_RIGHT = [0x01, 0x02]
 ALL_MOTORS  = MOTOR_LEFT + MOTOR_RIGHT
 
+# =====================================================
+# CONTROL
+# =====================================================
 MAX_RPM = 500
-ACC = 240
+ACC = 251
 DEADZONE = 0.001
 SEND_PERIOD = 0.05
-
-SLOW_FACTOR = 0.4
-FAST_FACTOR = 2.0
 
 BTN_START = 7
 BTN_L1 = 4
 BTN_R1 = 5
 
+SLOW_FACTOR = 0.4
+FAST_FACTOR = 3.0
+
 # =====================================================
-# AUX
+# AUXILIARES
 # =====================================================
 def clamp(x, lo, hi):
     return max(lo, min(hi, x))
@@ -54,10 +57,10 @@ def build_frame(dlc, can_id, data):
         0x55
     ])
 
-def read_raw(ser, t=0.03):
+def read_raw(ser, timeout=0.04):
     t0 = time.time()
     buf = bytearray()
-    while time.time() - t0 < t:
+    while time.time() - t0 < timeout:
         if ser.in_waiting:
             buf += ser.read(ser.in_waiting)
         time.sleep(0.001)
@@ -80,8 +83,8 @@ def send_speed(ser, can_id, rpm):
 
     ser.write(build_frame(0xC5, can_id, [0xF6, b2, b3, ACC]))
 
-def send_enable(ser, can_id, en):
-    ser.write(build_frame(0xC2, can_id, [0xF3, 0x01 if en else 0x00]))
+def send_enable(ser, can_id, enable):
+    ser.write(build_frame(0xC2, can_id, [0xF3, 0x01 if enable else 0x00]))
 
 def read_enable_state(ser, can_id):
     ser.reset_input_buffer()
@@ -103,17 +106,17 @@ def set_work_current(ser, can_id, ma):
     read_raw(ser)
 
 # -----------------------------------------------------
-# 0x9B – Set holding current percentage
+# 0x9B – Set holding current (%)
 # -----------------------------------------------------
 def set_holding_current(ser, can_id, percent):
     if percent not in (10,20,30,40,50,60,70,80,90):
         raise ValueError("Holding current inválido")
-    code = (percent // 10) - 1   # 10%→0 … 90%→8
+    code = (percent // 10) - 1
     ser.write(build_frame(0xC2, can_id, [0x9B, code]))
     read_raw(ser)
 
 # =====================================================
-# SECUENCIAS
+# SECUENCIAS CORRECTAS
 # =====================================================
 def disable_all(ser):
     for _ in range(2):
@@ -124,31 +127,36 @@ def disable_all(ser):
     for m in ALL_MOTORS:
         for _ in range(3):
             send_enable(ser, m, False)
-            time.sleep(0.02)
+            time.sleep(0.03)
             if read_enable_state(ser, m) is False:
                 break
 
 def enable_all(ser):
     for m in ALL_MOTORS:
-        # 1) Corriente de trabajo
+
+        # 1) ASEGURAR DISABLE
+        send_enable(ser, m, False)
+        time.sleep(0.05)
+
+        # 2) CONFIGURAR CORRIENTE
         set_work_current(ser, m, WORK_CURRENT_MA)
-        time.sleep(0.01)
+        time.sleep(0.02)
 
-        # 2) Holding current
+        # 3) CONFIGURAR HOLDING (IGNORADO EN vFOC)
         set_holding_current(ser, m, HOLDING_PERCENT)
-        time.sleep(0.01)
+        time.sleep(0.02)
 
-        # 3) Enable real
+        # 4) ENABLE REAL
         for _ in range(3):
             send_enable(ser, m, True)
-            time.sleep(0.02)
+            time.sleep(0.04)
             if read_enable_state(ser, m) is True:
                 break
 
 # =====================================================
 # INIT
 # =====================================================
-ser = serial.Serial(CAN_PORT, SERIAL_BAUD)
+ser = serial.Serial(PORT, SERIAL_BAUD)
 time.sleep(0.2)
 print("USB-CAN listo")
 
@@ -166,7 +174,7 @@ prev_start = 0
 last_send = 0.0
 
 # =====================================================
-# LOOP
+# LOOP PRINCIPAL
 # =====================================================
 try:
     while True:
@@ -183,7 +191,11 @@ try:
         v = apply_deadzone(-joy.get_axis(1), DEADZONE)
         w = apply_deadzone( joy.get_axis(3) / 2, DEADZONE)
 
-        factor = FAST_FACTOR if joy.get_button(BTN_R1) else SLOW_FACTOR if joy.get_button(BTN_L1) else 1.0
+        factor = 1.0
+        if joy.get_button(BTN_L1):
+            factor = SLOW_FACTOR
+        elif joy.get_button(BTN_R1):
+            factor = FAST_FACTOR
 
         left  = -clamp(v + w, -1, 1) * MAX_RPM * factor
         right =  clamp(v - w, -1, 1) * MAX_RPM * factor
