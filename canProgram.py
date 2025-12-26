@@ -6,7 +6,7 @@ import pygame
 # CONFIGURACIÓN GENERAL
 # =====================================================
 CAN_PORT = "/dev/ttyUSB0"
-CAN_BAUD = 500000          # CORREGIDO (válido según manual)
+CAN_BAUD = 2000000          # CORREGIDO (válido según manual)
 
 # IDs CAN de los motores
 MOTOR_LEFT  = [0x03, 0x04]
