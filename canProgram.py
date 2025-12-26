@@ -82,7 +82,7 @@ try:
         pygame.event.pump()
 
         v = deadzone(-joy.get_axis(1), DEADZONE)
-        w = deadzone( joy.get_axis(3), DEADZONE)
+        w = deadzone( joy.get_axis(3)/2, DEADZONE)
 
         left_rpm  = -clamp(v + w, -1, 1) * MAX_RPM
         right_rpm =  clamp(v - w, -1, 1) * MAX_RPM
