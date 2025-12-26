@@ -11,8 +11,8 @@ SERIAL_BAUD = 2000000     # enlace serie al USB-CAN
 # =====================================================
 # CONFIGURACIÓN DE CORRIENTE
 # =====================================================
-WORK_CURRENT_MA = 1600    # mA (SERVO42D máx 3000)
-HOLDING_PERCENT = 50     # 10,20,...,90 %
+WORK_CURRENT_MA = 3000    # mA (SERVO42D máx 3000)
+HOLDING_PERCENT = 10     # 10,20,...,90 %
 
 # =====================================================
 # MAPEOS
