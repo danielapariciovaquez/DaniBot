@@ -9,7 +9,8 @@ BAUD = 2000000
 
 MOTORS = [0x01, 0x02, 0x03, 0x04]
 
-WORK_CURRENT_MA = 1600   # mA (SERVO42D: 0–3000)
+TEST_RPM = 100     # velocidad baja y segura
+ACC = 50
 
 # =====================================================
 # AUX
@@ -17,11 +18,11 @@ WORK_CURRENT_MA = 1600   # mA (SERVO42D: 0–3000)
 def clamp(x, lo, hi):
     return max(lo, min(hi, x))
 
-def build_frame(can_id, data):
+def build_frame(dlc, can_id, data):
     crc = (can_id + sum(data)) & 0xFF
     return bytes([
         0xAA,
-        0xC3,               # DLC = 3 (83 + 2 bytes de corriente)
+        dlc & 0xFF,
         can_id & 0xFF,
         (can_id >> 8) & 0xFF,
         *data,
@@ -29,7 +30,7 @@ def build_frame(can_id, data):
         0x55
     ])
 
-def read_raw(ser, timeout=0.1):
+def read_raw(ser, timeout=0.2):
     t0 = time.time()
     buf = bytearray()
     while time.time() - t0 < timeout:
@@ -39,55 +40,69 @@ def read_raw(ser, timeout=0.1):
     return bytes(buf)
 
 # =====================================================
-# DECODIFICACIÓN RESPUESTA 0x83
+# COMANDOS
 # =====================================================
-def parse_response_83(raw):
-    """
-    Busca tramas que contengan:
-    83 status
-    """
-    responses = []
-    for i in range(len(raw) - 1):
-        if raw[i] == 0x83 and raw[i + 1] in (0x00, 0x01):
-            responses.append(raw[i + 1])
-    return responses
+def send_enable(ser, can_id, enable):
+    ser.write(build_frame(0xC2, can_id, [0xF3, 0x01 if enable else 0x00]))
+
+def send_speed(ser, can_id, rpm):
+    direction = 0
+    if rpm < 0:
+        direction = 1
+        rpm = -rpm
+
+    rpm = clamp(int(rpm), 0, 3000)
+    speed = rpm & 0x0FFF
+
+    b2 = (direction << 7) | ((speed >> 8) & 0x0F)
+    b3 = speed & 0xFF
+
+    ser.write(build_frame(0xC5, can_id, [0xF6, b2, b3, ACC]))
 
 # =====================================================
 # MAIN
 # =====================================================
-ser = serial.Serial(PORT, BAUD)
+ser = serial.Serial(PORT, BAUD, timeout=0)
 time.sleep(0.2)
-print("Puerto abierto")
+print("Puerto abierto\n")
 
-ma = clamp(WORK_CURRENT_MA, 0, 3000)
-ma_lo = ma & 0xFF
-ma_hi = (ma >> 8) & 0xFF
-
-print(f"\nEnviando corriente = {ma} mA\n")
-
+# --- ENABLE ---
+print("Enviando ENABLE (F3 = 1)")
 for mid in MOTORS:
-    print(f"Motor ID {mid:02X} -> ", end="")
+    ser.write(build_frame(0xC2, mid, [0xF3, 0x01]))
+time.sleep(0.1)
 
-    frame = build_frame(mid, [0x83, ma_lo, ma_hi])
-    ser.reset_input_buffer()
-    ser.write(frame)
+raw = read_raw(ser)
+if raw:
+    print("RX tras ENABLE:", raw.hex(" "))
+else:
+    print("RX tras ENABLE: <nada>")
 
-    raw = read_raw(ser)
+# --- MOVER ---
+print("\nEnviando F6 (mover motor)")
+for mid in MOTORS:
+    send_speed(ser, mid, TEST_RPM)
 
-    if not raw:
-        print("SIN RESPUESTA")
-        continue
+time.sleep(0.1)
 
-    statuses = parse_response_83(raw)
+raw = read_raw(ser)
+if raw:
+    print("RX tras F6:", raw.hex(" "))
+else:
+    print("RX tras F6: <nada>")
 
-    if not statuses:
-        print(f"Respuesta no reconocida: {raw.hex(' ')}")
-    else:
-        for st in statuses:
-            if st == 1:
-                print("OK (corriente aceptada)")
-            else:
-                print("FAIL")
+# --- STOP ---
+print("\nParando motores (F6 = 0)")
+for mid in MOTORS:
+    send_speed(ser, mid, 0)
+
+time.sleep(0.1)
+
+raw = read_raw(ser)
+if raw:
+    print("RX tras STOP:", raw.hex(" "))
+else:
+    print("RX tras STOP: <nada>")
 
 ser.close()
 print("\nFin")
