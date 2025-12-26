@@ -5,35 +5,47 @@ import pygame
 # =====================================================
 # CONFIGURACIÓN GENERAL
 # =====================================================
-CAN_PORT = "/dev/ttyUSB0"
-SERIAL_BAUD = 2000000       # IMPORTANTE: esto es el baudrate del enlace serie al USB-CAN (no el CAN bitrate)
+PORT = "/dev/ttyUSB0"
+SERIAL_BAUD = 2000000     # baudrate del enlace serie USB-CAN (no el CAN bitrate)
 
-# CAN bitrate en el motor (según manual): 125K/250K/500K/1M
-# bitRate = 00 125K, 01 250K, 02 500K, 03 1M  (comando 0x8A)
-MOTOR_CAN_BITRATE_CODE = 0x02   # 0x02 = 500K (cámbialo a 0x03 si tu bus es 1M)
+# =====================================================
+# CONFIGURACIÓN DE CORRIENTE
+# =====================================================
+WORK_CURRENT_MA = 1600     # SERVO42D: 0–3000 mA
+HOLDING_PERCENT = 50       # 10,20,...,90  (en vFOC se ignora)
 
-# IDs CAN de los motores
+# =====================================================
+# IDs DE MOTORES
+# =====================================================
 MOTOR_LEFT  = [0x03, 0x04]
 MOTOR_RIGHT = [0x01, 0x02]
 ALL_MOTORS  = MOTOR_LEFT + MOTOR_RIGHT
 
-# Parámetros de control
+# =====================================================
+# CONTROL
+# =====================================================
 MAX_RPM = 500
-ACC = 0
+ACC = 240
 DEADZONE = 0.001
-SEND_PERIOD = 0.05          # 20 Hz
+SEND_PERIOD = 0.05         # 20 Hz
 
-# Factores de velocidad
-SLOW_FACTOR = 0.2
-FAST_FACTOR = 3
-
-# Botones mando Xbox
 BTN_START = 7
 BTN_L1 = 4
 BTN_R1 = 5
 
+SLOW_FACTOR = 0.4
+FAST_FACTOR = 2.0
+
 # =====================================================
-# AUX
+# ESTADOS (bloqueo de envío durante enable/disable)
+# =====================================================
+STATE_DISABLED  = 0
+STATE_ENABLING  = 1
+STATE_ENABLED   = 2
+STATE_DISABLING = 3
+
+# =====================================================
+# AUXILIARES
 # =====================================================
 def clamp(x, lo, hi):
     return max(lo, min(hi, x))
@@ -41,30 +53,23 @@ def clamp(x, lo, hi):
 def apply_deadzone(x, dz):
     return 0.0 if abs(x) < dz else x
 
-def _build_frame(dlc, can_id, data_bytes):
-    """
-    Encapsulado serie de tu adaptador: 0xAA, Cx, IDlo, IDhi, data..., crc, 0x55
-    CRC según manual MKS: (ID + sum(data)) & 0xFF
-    """
-    crc = (can_id + sum(data_bytes)) & 0xFF
+def build_frame(dlc, can_id, data):
+    # CRC según manual: (ID + byte1 + ... + byte(n)) & 0xFF
+    crc = (can_id + sum(data)) & 0xFF
     return bytes([
         0xAA,
         dlc & 0xFF,
         can_id & 0xFF,
         (can_id >> 8) & 0xFF,
-        *data_bytes,
+        *data,
         crc,
         0x55
     ])
 
-def _read_response_once(ser, timeout_s=0.03):
-    """
-    Lee lo que haya llegado en un pequeño intervalo.
-    Ojo: el formato de respuesta depende del adaptador, aquí solo devolvemos raw bytes.
-    """
+def read_raw(ser, timeout=0.05):
     t0 = time.time()
     buf = bytearray()
-    while (time.time() - t0) < timeout_s:
+    while time.time() - t0 < timeout:
         n = ser.in_waiting
         if n:
             buf += ser.read(n)
@@ -72,7 +77,7 @@ def _read_response_once(ser, timeout_s=0.03):
     return bytes(buf)
 
 # =====================================================
-# COMANDOS MKS SOBRE CAN (ENCAPSULADOS EN SERIE)
+# COMANDOS MKS (encapsulados por tu USB-CAN)
 # =====================================================
 def send_speed(ser, can_id, rpm):
     direction = 0
@@ -83,144 +88,169 @@ def send_speed(ser, can_id, rpm):
     rpm = clamp(int(rpm), 0, 3000)
     speed = rpm & 0x0FFF
 
-    byte2 = (direction << 7) | ((speed >> 8) & 0x0F)
-    byte3 = speed & 0xFF
+    b2 = (direction << 7) | ((speed >> 8) & 0x0F)
+    b3 = speed & 0xFF
 
-    data = [0xF6, byte2, byte3, ACC]
-    frame = _build_frame(0xC5, can_id, data)   # DLC=5 en encapsulado (1 code + 3 params + ???) según tu adaptador
-    ser.write(frame)
+    # Encapsulado que vienes usando: 0xC5 para F6 (4 bytes de data: F6 b2 b3 acc)
+    ser.write(build_frame(0xC5, can_id, [0xF6, b2, b3, ACC]))
 
 def send_enable(ser, can_id, enable):
-    en = 0x01 if enable else 0x00
-    data = [0xF3, en]
-    frame = _build_frame(0xC2, can_id, data)   # tu encapsulado: C2 => 2 bytes data
-    ser.write(frame)
+    ser.write(build_frame(0xC2, can_id, [0xF3, 0x01 if enable else 0x00]))
 
 def read_enable_state(ser, can_id):
-    # MKS: comando 0x3A devuelve enable=0/1 :contentReference[oaicite:3]{index=3}
-    data = [0x3A]
-    frame = _build_frame(0xC1, can_id, data)   # tu encapsulado: C1 => 1 byte data
-
+    # Comando 0x3A: Read the En pins status (devuelve enable 0/1)
     ser.reset_input_buffer()
-    ser.write(frame)
-    raw = _read_response_once(ser, timeout_s=0.03)
+    ser.write(build_frame(0xC1, can_id, [0x3A]))
+    raw = read_raw(ser, timeout=0.05)
 
-    # Parse mínimo: buscamos un patrón con code=0x3A y un byte de dato detrás.
-    # Formato uplink MKS (CAN) sería: [ID][DLC][code][data][CRC], pero tu adaptador lo re-encapsula.
-    # Por robustez, buscamos la secuencia 0x3A, <0x00|0x01> en el flujo.
+    # Parse mínimo robusto: buscar patrón 0x3A, (0x00|0x01) en el flujo
     for i in range(len(raw) - 1):
-        if raw[i] == 0x3A and raw[i+1] in (0x00, 0x01):
-            return (raw[i+1] == 0x01)
+        if raw[i] == 0x3A and raw[i + 1] in (0, 1):
+            return raw[i + 1] == 1
+    return None
 
-    return None  # no se pudo determinar
+def set_work_current(ser, can_id, ma):
+    # Comando 0x83: Set working current (uint16_t mA)
+    ma = clamp(int(ma), 0, 3000)
+    lo = ma & 0xFF
+    hi = (ma >> 8) & 0xFF
+    ser.write(build_frame(0xC3, can_id, [0x83, lo, hi]))
+    read_raw(ser, timeout=0.05)
 
-def set_motor_canrate(ser, can_id, bitrate_code):
-    """
-    MKS comando 0x8A: Set CAN bitRate (00..03) :contentReference[oaicite:4]{index=4}
-    """
-    bitrate_code = clamp(int(bitrate_code), 0, 3)
-    data = [0x8A, bitrate_code]
-    frame = _build_frame(0xC2, can_id, data)
-    ser.write(frame)
-    _ = _read_response_once(ser, timeout_s=0.05)  # opcional: descartar ack si existe (depende de CanRSP)
+def set_holding_current(ser, can_id, percent):
+    # Comando 0x9B: Set holding current percentage (00..08 => 10..90%)
+    if percent not in (10, 20, 30, 40, 50, 60, 70, 80, 90):
+        raise ValueError("HOLDING_PERCENT debe ser 10..90 en pasos de 10")
+    code = (percent // 10) - 1
+    ser.write(build_frame(0xC2, can_id, [0x9B, code]))
+    read_raw(ser, timeout=0.05)
 
 # =====================================================
-# SECUENCIAS ROBUSTAS
+# SECUENCIAS DETERMINISTAS (sin interferencia del loop)
 # =====================================================
-def disable_all_motors(ser):
+def disable_all(ser):
+    # 1) Parar en speed mode (2 veces) para asegurar salida limpia
     for _ in range(2):
-        for mid in ALL_MOTORS:
-            send_speed(ser, mid, 0)
+        for m in ALL_MOTORS:
+            send_speed(ser, m, 0)
         time.sleep(0.03)
 
-    for mid in ALL_MOTORS:
-        for _ in range(3):
-            send_enable(ser, mid, False)
-            time.sleep(0.02)
-            st = read_enable_state(ser, mid)
+    # 2) Disable real (reintento + verificación 0x3A)
+    for m in ALL_MOTORS:
+        for _ in range(4):
+            send_enable(ser, m, False)
+            time.sleep(0.03)
+            st = read_enable_state(ser, m)
             if st is False:
                 break
 
-def enable_all_motors(ser):
-    for mid in ALL_MOTORS:
-        for _ in range(3):
-            send_enable(ser, mid, True)
-            time.sleep(0.02)
-            st = read_enable_state(ser, mid)
+def enable_all(ser):
+    for m in ALL_MOTORS:
+        # 0) Asegurar disable antes de configurar corrientes
+        for _ in range(2):
+            send_enable(ser, m, False)
+            time.sleep(0.03)
+            st = read_enable_state(ser, m)
+            if st is False:
+                break
+
+        # 1) Configurar corriente de trabajo (mA)
+        set_work_current(ser, m, WORK_CURRENT_MA)
+        time.sleep(0.02)
+
+        # 2) Configurar holding current (%). (En vFOC el firmware lo ignora)
+        set_holding_current(ser, m, HOLDING_PERCENT)
+        time.sleep(0.02)
+
+        # 3) Enable real (reintento + verificación 0x3A)
+        for _ in range(4):
+            send_enable(ser, m, True)
+            time.sleep(0.04)
+            st = read_enable_state(ser, m)
             if st is True:
                 break
 
 # =====================================================
-# INICIALIZACIÓN
+# INIT
 # =====================================================
-ser = serial.Serial(CAN_PORT, SERIAL_BAUD)
+ser = serial.Serial(PORT, SERIAL_BAUD)
 time.sleep(0.2)
-print(f"USB-CAN listo (enlace serie a {SERIAL_BAUD} bps)")
-
-# (Opcional pero recomendado) Forzar CanRate en cada motor (motor-side)
-# NOTA: cambiar CanRate implica coherencia con el adaptador y el resto del bus.
-for mid in ALL_MOTORS:
-    set_motor_canrate(ser, mid, MOTOR_CAN_BITRATE_CODE)
-time.sleep(0.1)
+print("USB-CAN listo")
 
 pygame.init()
 pygame.joystick.init()
 
 if pygame.joystick.get_count() == 0:
-    raise RuntimeError("No se detecta ningún mando")
+    raise RuntimeError("No se detecta mando")
 
 joy = pygame.joystick.Joystick(0)
 joy.init()
 print("Mando detectado:", joy.get_name())
 
-motors_enabled = False
+system_state = STATE_DISABLED
 prev_start = 0
 last_send = 0.0
 
 # =====================================================
-# BUCLE PRINCIPAL
+# LOOP PRINCIPAL
 # =====================================================
 try:
     while True:
         pygame.event.pump()
 
+        # --------------------------
+        # START: toggle enable/disable (bloqueante)
+        # --------------------------
         start = joy.get_button(BTN_START)
         if start and not prev_start:
-            motors_enabled = not motors_enabled
-            print("MOTORES", "ENABLE" if motors_enabled else "DISABLE")
 
-            if motors_enabled:
-                enable_all_motors(ser)
-            else:
-                disable_all_motors(ser)
+            if system_state == STATE_ENABLED:
+                print("TRANSICIÓN: DISABLING")
+                system_state = STATE_DISABLING
+                disable_all(ser)
+                system_state = STATE_DISABLED
+                print("MOTORES DESACTIVADOS")
+
+            elif system_state == STATE_DISABLED:
+                print("TRANSICIÓN: ENABLING (configurando corriente + holding)")
+                system_state = STATE_ENABLING
+                enable_all(ser)
+                system_state = STATE_ENABLED
+                print("MOTORES ACTIVADOS")
 
         prev_start = start
 
-        v = apply_deadzone(-joy.get_axis(1), DEADZONE)
-        w = apply_deadzone( joy.get_axis(3) / 2, DEADZONE)
+        # --------------------------
+        # SOLO EN ENABLED se envía F6
+        # --------------------------
+        if system_state == STATE_ENABLED:
+            v = apply_deadzone(-joy.get_axis(1), DEADZONE)
+            w = apply_deadzone(joy.get_axis(3) / 2, DEADZONE)
 
-        factor = 1.0
-        if joy.get_button(BTN_L1):
-            factor = SLOW_FACTOR
-        elif joy.get_button(BTN_R1):
-            factor = FAST_FACTOR
+            factor = 1.0
+            if joy.get_button(BTN_L1):
+                factor = SLOW_FACTOR
+            elif joy.get_button(BTN_R1):
+                factor = FAST_FACTOR
 
-        left_rpm  = -clamp(v + w, -1, 1) * MAX_RPM * factor
-        right_rpm =  clamp(v - w, -1, 1) * MAX_RPM * factor
+            left_rpm  = -clamp(v + w, -1, 1) * MAX_RPM * factor
+            right_rpm =  clamp(v - w, -1, 1) * MAX_RPM * factor
 
-        now = time.time()
-        if motors_enabled and (now - last_send) >= SEND_PERIOD:
-            for mid in MOTOR_LEFT:
-                send_speed(ser, mid, left_rpm)
-            for mid in MOTOR_RIGHT:
-                send_speed(ser, mid, right_rpm)
-            last_send = now
+            now = time.time()
+            if (now - last_send) >= SEND_PERIOD:
+                for m in MOTOR_LEFT:
+                    send_speed(ser, m, left_rpm)
+                for m in MOTOR_RIGHT:
+                    send_speed(ser, m, right_rpm)
+                last_send = now
 
         time.sleep(0.005)
 
 except KeyboardInterrupt:
     print("SALIDA SEGURA: deshabilitando motores")
-    disable_all_motors(ser)
+    system_state = STATE_DISABLING
+    disable_all(ser)
+    system_state = STATE_DISABLED
     ser.close()
     pygame.quit()
     print("Sistema cerrado correctamente")
