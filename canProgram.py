@@ -19,7 +19,7 @@ ALL_MOTORS  = MOTOR_LEFT + MOTOR_RIGHT
 
 # Parámetros de control
 MAX_RPM = 500
-ACC = 252
+ACC = 0
 DEADZONE = 0.001
 SEND_PERIOD = 0.05          # 20 Hz
 
