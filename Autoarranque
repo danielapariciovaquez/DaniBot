@@ -3,12 +3,15 @@ Hay que escribir en este registro
 sudo nano /etc/systemd/system/mi_aplicacion.service
 
 [Unit]
-Description=Mi Aplicación
+Description=Mi DaniBot Service
+After=network.target
 
 [Service]
-ExecStart=/usr/bin/python3 /home/pi/miscripts/miscript.py
-Restart=always
-User=pi
+Type=simple
+User=dani
+WorkingDirectory=/home/dani/DaniBot
+ExecStart=/home/dani/DaniBot/start.sh
+Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
