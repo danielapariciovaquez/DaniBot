@@ -1,0 +1,14 @@
+Hay que escribir en este registro
+
+sudo nano /etc/systemd/system/mi_aplicacion.service
+
+[Unit]
+Description=Mi Aplicación
+
+[Service]
+ExecStart=/usr/bin/python3 /home/pi/miscripts/miscript.py
+Restart=always
+User=pi
+
+[Install]
+WantedBy=multi-user.target
