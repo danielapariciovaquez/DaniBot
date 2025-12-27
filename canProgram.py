@@ -34,7 +34,7 @@ BTN_L1 = 4
 BTN_R1 = 5
 
 SLOW_FACTOR = 0.4
-FAST_FACTOR = 3.0
+FAST_FACTOR = 4.0
 
 # =====================================================
 # AUXILIARES
