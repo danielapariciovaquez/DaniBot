@@ -25,7 +25,7 @@ ALL_MOTORS  = MOTOR_LEFT + MOTOR_RIGHT
 # CONTROL
 # =====================================================
 MAX_RPM = 500
-ACC = 250
+ACC = 100
 DEADZONE = 0.001
 SEND_PERIOD = 0.05
 
