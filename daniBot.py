@@ -189,7 +189,7 @@ try:
         prev_start = start
 
         v = apply_deadzone(-joy.get_axis(1), DEADZONE)
-        w = apply_deadzone( joy.get_axis(3) / 5 , DEADZONE)
+        w = apply_deadzone( joy.get_axis(3)/5 , DEADZONE)
 
         factor = 1.0
         if joy.get_button(BTN_L1):
