@@ -84,7 +84,7 @@ def send_speed(ser, can_id, rpm):
     ser.write(build_frame(0xC5, can_id, [0xF6, b2, b3, ACC]))
 
 def send_enable(ser, can_id, enable):
-    ser.write(build_frame(0xC2, can_id, [0xF3, 0x01 if enable else 0x00]))
+    ser.write(build_frame(0xC2, can_id, [0xF3, 0x00 if enable else 0x00]))
 
 def read_enable_state(ser, can_id):
     ser.reset_input_buffer()
