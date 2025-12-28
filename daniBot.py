@@ -195,7 +195,7 @@ try:
             factor = FAST_FACTOR
 
         v = apply_deadzone(-joy.get_axis(1), DEADZONE)
-        w = apply_deadzone( joy.get_axis(3)/factor , DEADZONE)
+        w = apply_deadzone( joy.get_axis(3)/(factor*4) , DEADZONE)
 
         
         left  = -clamp(v + w, -1, 1) * MAX_RPM * factor
