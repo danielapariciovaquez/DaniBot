@@ -25,9 +25,9 @@ ALL_MOTORS  = MOTOR_LEFT + MOTOR_RIGHT
 # CONTROL
 # =====================================================
 MAX_RPM = 150
-ACC = 0
+ACC = 200
 DEADZONE = 0.001
-SEND_PERIOD = 0.005
+SEND_PERIOD = 0.001
 
 BTN_START = 7
 BTN_L1 = 4
