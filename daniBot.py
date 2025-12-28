@@ -188,15 +188,16 @@ try:
 
         prev_start = start
 
-        v = apply_deadzone(-joy.get_axis(1), DEADZONE)
-        w = apply_deadzone( joy.get_axis(3)/factor , DEADZONE)
-
         factor = 1.0
         if joy.get_button(BTN_L1):
             factor = SLOW_FACTOR
         elif joy.get_button(BTN_R1):
             factor = FAST_FACTOR
 
+        v = apply_deadzone(-joy.get_axis(1), DEADZONE)
+        w = apply_deadzone( joy.get_axis(3)/factor , DEADZONE)
+
+        
         left  = -clamp(v + w, -1, 1) * MAX_RPM * factor
         right =  clamp(v - w, -1, 1) * MAX_RPM * factor
 
