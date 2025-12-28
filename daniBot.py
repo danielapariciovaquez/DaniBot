@@ -25,7 +25,7 @@ ALL_MOTORS  = MOTOR_LEFT + MOTOR_RIGHT
 # CONTROL
 # =====================================================
 MAX_RPM = 150
-ACC = 200
+ACC = 0
 DEADZONE = 0.001
 SEND_PERIOD = 0.001
 
@@ -189,7 +189,7 @@ try:
         prev_start = start
 
         v = apply_deadzone(-joy.get_axis(1), DEADZONE)
-        w = apply_deadzone( joy.get_axis(3)/5 , DEADZONE)
+        w = apply_deadzone( joy.get_axis(3)/factor , DEADZONE)
 
         factor = 1.0
         if joy.get_button(BTN_L1):
