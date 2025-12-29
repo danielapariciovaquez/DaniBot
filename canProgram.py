@@ -22,28 +22,37 @@ MOTOR_RIGHT = [0x01, 0x02]
 ALL_MOTORS  = MOTOR_LEFT + MOTOR_RIGHT
 
 # =====================================================
-# CONTROL BÁSICO
+# CONTROL
 # =====================================================
-MAX_RPM = 100
 ACC = 0
 DEADZONE = 0.001
 SEND_PERIOD = 0.001
 
 BTN_START = 7
-BTN_L1 = 4
-BTN_R1 = 5
+BTN_L1    = 4
+
+BTN_A = 0
+BTN_B = 1
+BTN_X = 2
+BTN_Y = 3
 
 # =====================================================
-# LÍMITES DE VELOCIDAD POR MODO
+# MODOS DE VELOCIDAD (RPM MÁX)
 # =====================================================
-RPM_MAX_SLOW   = int(MAX_RPM * 0.4)
-RPM_MAX_NORMAL = MAX_RPM
-RPM_MAX_FAST   = int(MAX_RPM * 4.0)
+MODE_RPM = {
+    1: 50,
+    2: 100,
+    3: 200,
+    4: 400
+}
+
+current_mode = 2            # modo por defecto
+rpm_limit = MODE_RPM[current_mode]
 
 # =====================================================
 # ACELERACIÓN LINEAL ABSOLUTA
 # =====================================================
-RPM_PER_100_TIME = 0.25   # segundos para aumentar 100 RPM
+RPM_PER_100_TIME = 0.25     # 100 RPM en 0.25 s
 
 # =====================================================
 # AUXILIARES
@@ -119,8 +128,6 @@ def set_work_current(ser, can_id, ma):
     read_raw(ser)
 
 def set_holding_current(ser, can_id, percent):
-    if percent not in (10,20,30,40,50,60,70,80,90):
-        raise ValueError("Holding current inválido")
     code = (percent // 10) - 1
     ser.write(build_frame(0xC2, can_id, [0x9B, code]))
     read_raw(ser)
@@ -135,11 +142,8 @@ def disable_all(ser):
         time.sleep(0.03)
 
     for m in ALL_MOTORS:
-        for _ in range(3):
-            send_enable(ser, m, False)
-            time.sleep(0.03)
-            if read_enable_state(ser, m) is False:
-                break
+        send_enable(ser, m, False)
+        time.sleep(0.03)
 
 def enable_all(ser):
     for m in ALL_MOTORS:
@@ -152,11 +156,8 @@ def enable_all(ser):
         set_holding_current(ser, m, HOLDING_PERCENT)
         time.sleep(0.02)
 
-        for _ in range(3):
-            send_enable(ser, m, True)
-            time.sleep(0.04)
-            if read_enable_state(ser, m) is True:
-                break
+        send_enable(ser, m, True)
+        time.sleep(0.05)
 
 # =====================================================
 # INIT
@@ -176,7 +177,6 @@ joy.init()
 
 motors_enabled = False
 prev_start = 0
-last_send = 0.0
 
 v_rpm_filtered = 0.0
 last_time = time.time()
@@ -188,26 +188,38 @@ try:
     while True:
         pygame.event.pump()
 
+        # -------- ENABLE / DISABLE --------
         start = joy.get_button(BTN_START)
         if start and not prev_start:
             motors_enabled = not motors_enabled
+            print("MOTORES", "ENABLE" if motors_enabled else "DISABLE")
             enable_all(ser) if motors_enabled else disable_all(ser)
         prev_start = start
 
+        # -------- CAMBIO DE MODO (L1 + BOTÓN) --------
         if joy.get_button(BTN_L1):
-            rpm_limit = RPM_MAX_SLOW
-        elif joy.get_button(BTN_R1):
-            rpm_limit = RPM_MAX_FAST
-        else:
-            rpm_limit = RPM_MAX_NORMAL
+            if joy.get_button(BTN_A):
+                current_mode = 1
+            elif joy.get_button(BTN_X):
+                current_mode = 2
+            elif joy.get_button(BTN_Y):
+                current_mode = 3
+            elif joy.get_button(BTN_B):
+                current_mode = 4
 
+        rpm_limit = MODE_RPM[current_mode]
+
+        # Reanclar estado interno al nuevo límite
         v_rpm_filtered = clamp(v_rpm_filtered, -rpm_limit, rpm_limit)
 
+        # -------- LECTURA EJES --------
         v_cmd = apply_deadzone(-joy.get_axis(1), DEADZONE)
         w     = apply_deadzone( joy.get_axis(3)/4, DEADZONE)
 
+        # -------- CONSIGNA LINEAL --------
         v_rpm_cmd = v_cmd * rpm_limit
 
+        # -------- RAMPA --------
         now = time.time()
         dt = now - last_time
         last_time = now
@@ -217,17 +229,18 @@ try:
 
         v_rpm_filtered = ramp(v_rpm_filtered, v_rpm_cmd, max_step)
 
+        # -------- MEZCLA SKID STEERING --------
         w_rpm = w * rpm_limit
 
         left  = -clamp(v_rpm_filtered + w_rpm, -rpm_limit, rpm_limit)
         right =  clamp(v_rpm_filtered - w_rpm, -rpm_limit, rpm_limit)
 
-        if motors_enabled and (now - last_send) >= SEND_PERIOD:
+        # -------- ENVÍO --------
+        if motors_enabled:
             for m in MOTOR_LEFT:
                 send_speed(ser, m, left)
             for m in MOTOR_RIGHT:
                 send_speed(ser, m, right)
-            last_send = now
 
         time.sleep(0.005)
 
