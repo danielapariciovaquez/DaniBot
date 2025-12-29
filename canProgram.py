@@ -208,7 +208,7 @@ try:
 
         # -------- LECTURA EJES --------
         v_cmd = apply_deadzone(-joy.get_axis(1), DEADZONE)
-        w     = apply_deadzone( joy.get_axis(3)/(factor*2), DEADZONE)
+        w     = apply_deadzone( joy.get_axis(3)/(factor*4), DEADZONE)
 
         # -------- RAMPA SOLO EN VELOCIDAD LINEAL --------
         dt = SEND_PERIOD
