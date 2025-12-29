@@ -39,7 +39,7 @@ FAST_FACTOR = 4.0
 # =====================================================
 # ACELERACIÓN VEHÍCULO (SOLO VELOCIDAD LINEAL)
 # =====================================================
-LINEAR_ACCEL = 10.0    # unidades de v por segundo (1.0 = 0→100% en 1 s)
+LINEAR_ACCEL = 7.0    # unidades de v por segundo (1.0 = 0→100% en 1 s)
 
 # =====================================================
 # AUXILIARES
