@@ -22,7 +22,7 @@ MOTOR_RIGHT = [0x01, 0x02]
 ALL_MOTORS  = MOTOR_LEFT + MOTOR_RIGHT
 
 # =====================================================
-# CONTROL
+# CONTROL BÁSICO
 # =====================================================
 MAX_RPM = 100
 ACC = 0
@@ -33,13 +33,17 @@ BTN_START = 7
 BTN_L1 = 4
 BTN_R1 = 5
 
-SLOW_FACTOR = 0.4
-FAST_FACTOR = 4.0
+# =====================================================
+# LÍMITES DE VELOCIDAD POR MODO
+# =====================================================
+RPM_MAX_SLOW   = int(MAX_RPM * 0.4)
+RPM_MAX_NORMAL = MAX_RPM
+RPM_MAX_FAST   = int(MAX_RPM * 4.0)
 
 # =====================================================
 # ACELERACIÓN LINEAL ABSOLUTA
 # =====================================================
-RPM_PER_100_TIME = 0.5   # segundos para aumentar 100 RPM
+RPM_PER_100_TIME = 0.25   # segundos para aumentar 100 RPM
 
 # =====================================================
 # AUXILIARES
@@ -184,30 +188,26 @@ try:
     while True:
         pygame.event.pump()
 
-        # -------- ENABLE / DISABLE --------
         start = joy.get_button(BTN_START)
         if start and not prev_start:
             motors_enabled = not motors_enabled
-            print("MOTORES", "ENABLE" if motors_enabled else "DISABLE")
             enable_all(ser) if motors_enabled else disable_all(ser)
-
         prev_start = start
 
-        # -------- FACTOR VELOCIDAD --------
-        factor = 1.0
         if joy.get_button(BTN_L1):
-            factor = SLOW_FACTOR
+            rpm_limit = RPM_MAX_SLOW
         elif joy.get_button(BTN_R1):
-            factor = FAST_FACTOR
+            rpm_limit = RPM_MAX_FAST
+        else:
+            rpm_limit = RPM_MAX_NORMAL
 
-        # -------- LECTURA EJES --------
+        v_rpm_filtered = clamp(v_rpm_filtered, -rpm_limit, rpm_limit)
+
         v_cmd = apply_deadzone(-joy.get_axis(1), DEADZONE)
-        w     = apply_deadzone( joy.get_axis(3)/(factor*4), DEADZONE)
+        w     = apply_deadzone( joy.get_axis(3)/4, DEADZONE)
 
-        # -------- CONSIGNA LINEAL RPM --------
-        v_rpm_cmd = v_cmd * MAX_RPM * factor
+        v_rpm_cmd = v_cmd * rpm_limit
 
-        # -------- RAMPA CON TIEMPO REAL --------
         now = time.time()
         dt = now - last_time
         last_time = now
@@ -217,13 +217,11 @@ try:
 
         v_rpm_filtered = ramp(v_rpm_filtered, v_rpm_cmd, max_step)
 
-        # -------- MEZCLA SKID STEERING --------
-        w_rpm = w * MAX_RPM * factor
+        w_rpm = w * rpm_limit
 
-        left  = -clamp(v_rpm_filtered + w_rpm, -MAX_RPM*factor, MAX_RPM*factor)
-        right =  clamp(v_rpm_filtered - w_rpm, -MAX_RPM*factor, MAX_RPM*factor)
+        left  = -clamp(v_rpm_filtered + w_rpm, -rpm_limit, rpm_limit)
+        right =  clamp(v_rpm_filtered - w_rpm, -rpm_limit, rpm_limit)
 
-        # -------- ENVÍO --------
         if motors_enabled and (now - last_send) >= SEND_PERIOD:
             for m in MOTOR_LEFT:
                 send_speed(ser, m, left)
