@@ -10,7 +10,6 @@ SERIAL_BAUD = 2000000     # baudrate del enlace serie USB-CAN
 
 # =====================================================
 # CONFIGURACIÓN DE CORRIENTE
-# (se mantiene, aunque ahora no sea el foco)
 # =====================================================
 WORK_CURRENT_MA = 1600     # mA
 HOLDING_PERCENT = 50      # %
@@ -40,7 +39,7 @@ FAST_FACTOR = 4.0
 # =====================================================
 # ACELERACIÓN LINEAL ABSOLUTA
 # =====================================================
-RPM_PER_100_TIME = 0.5   # segundos para aumentar 100 RPM
+RPM_PER_100_TIME = 5   # segundos para aumentar 100 RPM
 
 # =====================================================
 # AUXILIARES
@@ -177,6 +176,7 @@ last_send = 0.0
 
 # -------- VELOCIDAD LINEAL FILTRADA EN RPM --------
 v_rpm_filtered = 0.0
+last_time = time.time()   # <<< TIEMPO REAL
 
 # =====================================================
 # LOOP PRINCIPAL
@@ -202,38 +202,3 @@ try:
             factor = FAST_FACTOR
 
         # -------- LECTURA EJES --------
-        v_cmd = apply_deadzone(-joy.get_axis(1), DEADZONE)   # [-1..1]
-        w     = apply_deadzone( joy.get_axis(3)/(factor*4), DEADZONE)
-
-        # -------- CONSIGNA LINEAL EN RPM --------
-        v_rpm_cmd = v_cmd * MAX_RPM * factor
-
-        # -------- RAMPA ABSOLUTA EN RPM --------
-        dt = SEND_PERIOD
-        acc_rpm = 100.0 / RPM_PER_100_TIME   # RPM/s
-        max_step = acc_rpm * dt
-
-        v_rpm_filtered = ramp(v_rpm_filtered, v_rpm_cmd, max_step)
-
-        # -------- MEZCLA SKID STEERING --------
-        w_rpm = w * MAX_RPM * factor
-
-        left  = -clamp(v_rpm_filtered + w_rpm, -MAX_RPM*factor, MAX_RPM*factor)
-        right =  clamp(v_rpm_filtered - w_rpm, -MAX_RPM*factor, MAX_RPM*factor)
-
-        # -------- ENVÍO DE VELOCIDAD --------
-        now = time.time()
-        if motors_enabled and now - last_send >= SEND_PERIOD:
-            for m in MOTOR_LEFT:
-                send_speed(ser, m, left)
-            for m in MOTOR_RIGHT:
-                send_speed(ser, m, right)
-            last_send = now
-
-        time.sleep(0.005)
-
-except KeyboardInterrupt:
-    print("SALIDA SEGURA")
-    disable_all(ser)
-    ser.close()
-    pygame.quit()
