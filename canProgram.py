@@ -41,9 +41,9 @@ BTN_Y = 3
 # =====================================================
 MODE_RPM = {
     1: 50,
-    2: 200,
-    3: 500,
-    4: 800
+    2: 100,
+    3: 200,
+    4: 300
 }
 
 current_mode = 2            # modo por defecto
@@ -214,7 +214,7 @@ try:
 
         # -------- LECTURA EJES --------
         v_cmd = apply_deadzone(-joy.get_axis(1), DEADZONE)
-        w     = apply_deadzone( joy.get_axis(3)/current_mode*2, DEADZONE)
+        w     = apply_deadzone( joy.get_axis(3)/current_mode, DEADZONE)
 
         # -------- CONSIGNA LINEAL --------
         v_rpm_cmd = v_cmd * rpm_limit
