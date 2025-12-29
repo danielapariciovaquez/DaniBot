@@ -9,4 +9,3 @@ git pull
 
 #exec /usr/bin/python3 /home/dani/DaniBot/confRobot.py
 exec /usr/bin/python3 /home/dani/DaniBot/canProgram.py
-#exec /usr/bin/python3 /home/dani/DaniBot/daniBot.py
