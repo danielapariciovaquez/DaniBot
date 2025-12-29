@@ -214,7 +214,7 @@ try:
 
         # -------- LECTURA EJES --------
         v_cmd = apply_deadzone(-joy.get_axis(1), DEADZONE)
-        w     = apply_deadzone( joy.get_axis(3), DEADZONE)
+        w     = apply_deadzone( joy.get_axis(3)/(rpm_limit*10), DEADZONE)
 
         # -------- CONSIGNA LINEAL --------
         v_rpm_cmd = v_cmd * rpm_limit
