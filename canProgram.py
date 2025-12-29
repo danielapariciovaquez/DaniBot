@@ -43,7 +43,7 @@ RPM_MAX_FAST   = int(MAX_RPM * 4.0)
 # =====================================================
 # ACELERACIÓN LINEAL ABSOLUTA
 # =====================================================
-RPM_PER_100_TIME = 0.5   # segundos para aumentar 100 RPM
+RPM_PER_100_TIME = 0.25   # segundos para aumentar 100 RPM
 
 # =====================================================
 # AUXILIARES
@@ -111,6 +111,20 @@ def read_enable_state(ser, can_id):
             return raw[i + 1] == 1
     return None
 
+def set_work_current(ser, can_id, ma):
+    ma = clamp(int(ma), 0, 3000)
+    lo = ma & 0xFF
+    hi = (ma >> 8) & 0xFF
+    ser.write(build_frame(0xC3, can_id, [0x83, lo, hi]))
+    read_raw(ser)
+
+def set_holding_current(ser, can_id, percent):
+    if percent not in (10,20,30,40,50,60,70,80,90):
+        raise ValueError("Holding current inválido")
+    code = (percent // 10) - 1
+    ser.write(build_frame(0xC2, can_id, [0x9B, code]))
+    read_raw(ser)
+
 # =====================================================
 # SECUENCIAS
 # =====================================================
@@ -174,14 +188,12 @@ try:
     while True:
         pygame.event.pump()
 
-        # -------- ENABLE / DISABLE --------
         start = joy.get_button(BTN_START)
         if start and not prev_start:
             motors_enabled = not motors_enabled
             enable_all(ser) if motors_enabled else disable_all(ser)
         prev_start = start
 
-        # -------- SELECCIÓN DE MODO --------
         if joy.get_button(BTN_L1):
             rpm_limit = RPM_MAX_SLOW
         elif joy.get_button(BTN_R1):
@@ -189,17 +201,13 @@ try:
         else:
             rpm_limit = RPM_MAX_NORMAL
 
-        # >>> CORRECCIÓN CLAVE <<<
         v_rpm_filtered = clamp(v_rpm_filtered, -rpm_limit, rpm_limit)
 
-        # -------- LECTURA EJES --------
         v_cmd = apply_deadzone(-joy.get_axis(1), DEADZONE)
         w     = apply_deadzone( joy.get_axis(3)/4, DEADZONE)
 
-        # -------- CONSIGNA LINEAL --------
         v_rpm_cmd = v_cmd * rpm_limit
 
-        # -------- RAMPA --------
         now = time.time()
         dt = now - last_time
         last_time = now
@@ -209,13 +217,11 @@ try:
 
         v_rpm_filtered = ramp(v_rpm_filtered, v_rpm_cmd, max_step)
 
-        # -------- MEZCLA --------
         w_rpm = w * rpm_limit
 
         left  = -clamp(v_rpm_filtered + w_rpm, -rpm_limit, rpm_limit)
         right =  clamp(v_rpm_filtered - w_rpm, -rpm_limit, rpm_limit)
 
-        # -------- ENVÍO --------
         if motors_enabled and (now - last_send) >= SEND_PERIOD:
             for m in MOTOR_LEFT:
                 send_speed(ser, m, left)
@@ -226,6 +232,7 @@ try:
         time.sleep(0.005)
 
 except KeyboardInterrupt:
+    print("SALIDA SEGURA")
     disable_all(ser)
     ser.close()
     pygame.quit()
