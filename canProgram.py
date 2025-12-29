@@ -24,17 +24,22 @@ ALL_MOTORS  = MOTOR_LEFT + MOTOR_RIGHT
 # =====================================================
 # CONTROL
 # =====================================================
-MAX_RPM = 600
-ACC = 253
+MAX_RPM = 100
+ACC = 0
 DEADZONE = 0.001
-SEND_PERIOD = 0.05
+SEND_PERIOD = 0.001
 
 BTN_START = 7
 BTN_L1 = 4
 BTN_R1 = 5
 
 SLOW_FACTOR = 0.4
-FAST_FACTOR = 3.0
+FAST_FACTOR = 4.0
+
+# =====================================================
+# ACELERACIÓN VEHÍCULO (SOLO VELOCIDAD LINEAL)
+# =====================================================
+LINEAR_ACCEL = 2.0    # unidades de v por segundo (1.0 = 0→100% en 1 s)
 
 # =====================================================
 # AUXILIARES
@@ -44,6 +49,13 @@ def clamp(x, lo, hi):
 
 def apply_deadzone(x, dz):
     return 0.0 if abs(x) < dz else x
+
+def ramp(current, target, max_delta):
+    if target > current + max_delta:
+        return current + max_delta
+    if target < current - max_delta:
+        return current - max_delta
+    return target
 
 def build_frame(dlc, can_id, data):
     crc = (can_id + sum(data)) & 0xFF
@@ -84,7 +96,7 @@ def send_speed(ser, can_id, rpm):
     ser.write(build_frame(0xC5, can_id, [0xF6, b2, b3, ACC]))
 
 def send_enable(ser, can_id, enable):
-    ser.write(build_frame(0xC2, can_id, [0xF3, 0x00 if enable else 0x00]))
+    ser.write(build_frame(0xC2, can_id, [0xF3, 0x01 if enable else 0x00]))
 
 def read_enable_state(ser, can_id):
     ser.reset_input_buffer()
@@ -116,7 +128,7 @@ def set_holding_current(ser, can_id, percent):
     read_raw(ser)
 
 # =====================================================
-# SECUENCIAS CORRECTAS
+# SECUENCIAS
 # =====================================================
 def disable_all(ser):
     for _ in range(2):
@@ -133,20 +145,15 @@ def disable_all(ser):
 
 def enable_all(ser):
     for m in ALL_MOTORS:
-
-        # 1) ASEGURAR DISABLE
         send_enable(ser, m, False)
         time.sleep(0.05)
 
-        # 2) CONFIGURAR CORRIENTE
         set_work_current(ser, m, WORK_CURRENT_MA)
         time.sleep(0.02)
 
-        # 3) CONFIGURAR HOLDING (IGNORADO EN vFOC)
         set_holding_current(ser, m, HOLDING_PERCENT)
         time.sleep(0.02)
 
-        # 4) ENABLE REAL
         for _ in range(3):
             send_enable(ser, m, True)
             time.sleep(0.04)
@@ -173,6 +180,9 @@ motors_enabled = False
 prev_start = 0
 last_send = 0.0
 
+# -------- ESTADO DE VELOCIDAD LINEAL FILTRADA --------
+v_filtered = 0.0
+
 # =====================================================
 # LOOP PRINCIPAL
 # =====================================================
@@ -180,6 +190,7 @@ try:
     while True:
         pygame.event.pump()
 
+        # -------- ENABLE / DISABLE --------
         start = joy.get_button(BTN_START)
         if start and not prev_start:
             motors_enabled = not motors_enabled
@@ -188,18 +199,27 @@ try:
 
         prev_start = start
 
-        v = apply_deadzone(-joy.get_axis(1), DEADZONE)
-        w = apply_deadzone( joy.get_axis(3) / 2, DEADZONE)
-
+        # -------- FACTOR DE VELOCIDAD --------
         factor = 1.0
         if joy.get_button(BTN_L1):
             factor = SLOW_FACTOR
         elif joy.get_button(BTN_R1):
             factor = FAST_FACTOR
 
-        left  = -clamp(v + w, -1, 1) * MAX_RPM * factor
-        right =  clamp(v - w, -1, 1) * MAX_RPM * factor
+        # -------- LECTURA EJES --------
+        v_cmd = apply_deadzone(-joy.get_axis(1), DEADZONE)
+        w     = apply_deadzone( joy.get_axis(3)/(factor*4), DEADZONE)
 
+        # -------- RAMPA SOLO EN VELOCIDAD LINEAL --------
+        dt = SEND_PERIOD
+        max_step = LINEAR_ACCEL * dt
+        v_filtered = ramp(v_filtered, v_cmd, max_step)
+
+        # -------- MEZCLA SKID STEERING --------
+        left  = -clamp(v_filtered + w, -1, 1) * MAX_RPM * factor
+        right =  clamp(v_filtered - w, -1, 1) * MAX_RPM * factor
+
+        # -------- ENVÍO DE VELOCIDAD --------
         now = time.time()
         if motors_enabled and now - last_send >= SEND_PERIOD:
             for m in MOTOR_LEFT:
