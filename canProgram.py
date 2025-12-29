@@ -111,20 +111,6 @@ def read_enable_state(ser, can_id):
             return raw[i + 1] == 1
     return None
 
-def set_work_current(ser, can_id, ma):
-    ma = clamp(int(ma), 0, 3000)
-    lo = ma & 0xFF
-    hi = (ma >> 8) & 0xFF
-    ser.write(build_frame(0xC3, can_id, [0x83, lo, hi]))
-    read_raw(ser)
-
-def set_holding_current(ser, can_id, percent):
-    if percent not in (10,20,30,40,50,60,70,80,90):
-        raise ValueError("Holding current inválido")
-    code = (percent // 10) - 1
-    ser.write(build_frame(0xC2, can_id, [0x9B, code]))
-    read_raw(ser)
-
 # =====================================================
 # SECUENCIAS
 # =====================================================
@@ -192,17 +178,19 @@ try:
         start = joy.get_button(BTN_START)
         if start and not prev_start:
             motors_enabled = not motors_enabled
-            print("MOTORES", "ENABLE" if motors_enabled else "DISABLE")
             enable_all(ser) if motors_enabled else disable_all(ser)
         prev_start = start
 
-        # -------- SELECCIÓN DE MODO (LÍMITE) --------
+        # -------- SELECCIÓN DE MODO --------
         if joy.get_button(BTN_L1):
             rpm_limit = RPM_MAX_SLOW
         elif joy.get_button(BTN_R1):
             rpm_limit = RPM_MAX_FAST
         else:
             rpm_limit = RPM_MAX_NORMAL
+
+        # >>> CORRECCIÓN CLAVE <<<
+        v_rpm_filtered = clamp(v_rpm_filtered, -rpm_limit, rpm_limit)
 
         # -------- LECTURA EJES --------
         v_cmd = apply_deadzone(-joy.get_axis(1), DEADZONE)
@@ -211,7 +199,7 @@ try:
         # -------- CONSIGNA LINEAL --------
         v_rpm_cmd = v_cmd * rpm_limit
 
-        # -------- RAMPA CON TIEMPO REAL --------
+        # -------- RAMPA --------
         now = time.time()
         dt = now - last_time
         last_time = now
@@ -221,7 +209,7 @@ try:
 
         v_rpm_filtered = ramp(v_rpm_filtered, v_rpm_cmd, max_step)
 
-        # -------- MEZCLA SKID STEERING --------
+        # -------- MEZCLA --------
         w_rpm = w * rpm_limit
 
         left  = -clamp(v_rpm_filtered + w_rpm, -rpm_limit, rpm_limit)
@@ -238,7 +226,6 @@ try:
         time.sleep(0.005)
 
 except KeyboardInterrupt:
-    print("SALIDA SEGURA")
     disable_all(ser)
     ser.close()
     pygame.quit()
