@@ -6,13 +6,13 @@ import pygame
 # CONFIGURACIÓN GENERAL
 # =====================================================
 PORT = "/dev/ttyUSB0"
-SERIAL_BAUD = 2000000     # baudrate del enlace serie USB-CAN
+SERIAL_BAUD = 2000000
 
 # =====================================================
 # CONFIGURACIÓN DE CORRIENTE
 # =====================================================
-WORK_CURRENT_MA = 1600     # mA
-HOLDING_PERCENT = 50      # %
+WORK_CURRENT_MA = 1600
+HOLDING_PERCENT = 50
 
 # =====================================================
 # IDs DE MOTORES
@@ -39,7 +39,7 @@ FAST_FACTOR = 4.0
 # =====================================================
 # ACELERACIÓN LINEAL ABSOLUTA
 # =====================================================
-RPM_PER_100_TIME = 5   # segundos para aumentar 100 RPM
+RPM_PER_100_TIME = 0.25   # segundos para aumentar 100 RPM
 
 # =====================================================
 # AUXILIARES
@@ -174,9 +174,8 @@ motors_enabled = False
 prev_start = 0
 last_send = 0.0
 
-# -------- VELOCIDAD LINEAL FILTRADA EN RPM --------
 v_rpm_filtered = 0.0
-last_time = time.time()   # <<< TIEMPO REAL
+last_time = time.time()
 
 # =====================================================
 # LOOP PRINCIPAL
@@ -194,7 +193,7 @@ try:
 
         prev_start = start
 
-        # -------- FACTOR DE VELOCIDAD --------
+        # -------- FACTOR VELOCIDAD --------
         factor = 1.0
         if joy.get_button(BTN_L1):
             factor = SLOW_FACTOR
@@ -202,3 +201,40 @@ try:
             factor = FAST_FACTOR
 
         # -------- LECTURA EJES --------
+        v_cmd = apply_deadzone(-joy.get_axis(1), DEADZONE)
+        w     = apply_deadzone( joy.get_axis(3)/(factor*4), DEADZONE)
+
+        # -------- CONSIGNA LINEAL RPM --------
+        v_rpm_cmd = v_cmd * MAX_RPM * factor
+
+        # -------- RAMPA CON TIEMPO REAL --------
+        now = time.time()
+        dt = now - last_time
+        last_time = now
+
+        acc_rpm = 100.0 / RPM_PER_100_TIME
+        max_step = acc_rpm * dt
+
+        v_rpm_filtered = ramp(v_rpm_filtered, v_rpm_cmd, max_step)
+
+        # -------- MEZCLA SKID STEERING --------
+        w_rpm = w * MAX_RPM * factor
+
+        left  = -clamp(v_rpm_filtered + w_rpm, -MAX_RPM*factor, MAX_RPM*factor)
+        right =  clamp(v_rpm_filtered - w_rpm, -MAX_RPM*factor, MAX_RPM*factor)
+
+        # -------- ENVÍO --------
+        if motors_enabled and (now - last_send) >= SEND_PERIOD:
+            for m in MOTOR_LEFT:
+                send_speed(ser, m, left)
+            for m in MOTOR_RIGHT:
+                send_speed(ser, m, right)
+            last_send = now
+
+        time.sleep(0.005)
+
+except KeyboardInterrupt:
+    print("SALIDA SEGURA")
+    disable_all(ser)
+    ser.close()
+    pygame.quit()
