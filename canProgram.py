@@ -39,7 +39,7 @@ FAST_FACTOR = 4.0
 # =====================================================
 # ACELERACIÓN LINEAL ABSOLUTA
 # =====================================================
-RPM_PER_100_TIME = 0.25   # segundos para aumentar 100 RPM
+RPM_PER_100_TIME = 5   # segundos para aumentar 100 RPM
 
 # =====================================================
 # AUXILIARES
