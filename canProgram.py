@@ -10,6 +10,7 @@ SERIAL_BAUD = 2000000     # baudrate del enlace serie USB-CAN
 
 # =====================================================
 # CONFIGURACIÓN DE CORRIENTE
+# (se mantiene, aunque ahora no sea el foco)
 # =====================================================
 WORK_CURRENT_MA = 1600     # mA
 HOLDING_PERCENT = 50      # %
@@ -24,7 +25,7 @@ ALL_MOTORS  = MOTOR_LEFT + MOTOR_RIGHT
 # =====================================================
 # CONTROL
 # =====================================================
-MAX_RPM = 150
+MAX_RPM = 100
 ACC = 0
 DEADZONE = 0.001
 SEND_PERIOD = 0.001
@@ -37,9 +38,9 @@ SLOW_FACTOR = 0.4
 FAST_FACTOR = 4.0
 
 # =====================================================
-# ACELERACIÓN VEHÍCULO (SOLO VELOCIDAD LINEAL)
+# ACELERACIÓN LINEAL ABSOLUTA
 # =====================================================
-LINEAR_ACCEL = 7.0    # unidades de v por segundo (1.0 = 0→100% en 1 s)
+RPM_PER_100_TIME = 0.25   # segundos para aumentar 100 RPM
 
 # =====================================================
 # AUXILIARES
@@ -107,9 +108,6 @@ def read_enable_state(ser, can_id):
             return raw[i + 1] == 1
     return None
 
-# -----------------------------------------------------
-# 0x83 – Set working current (mA)
-# -----------------------------------------------------
 def set_work_current(ser, can_id, ma):
     ma = clamp(int(ma), 0, 3000)
     lo = ma & 0xFF
@@ -117,9 +115,6 @@ def set_work_current(ser, can_id, ma):
     ser.write(build_frame(0xC3, can_id, [0x83, lo, hi]))
     read_raw(ser)
 
-# -----------------------------------------------------
-# 0x9B – Set holding current (%)
-# -----------------------------------------------------
 def set_holding_current(ser, can_id, percent):
     if percent not in (10,20,30,40,50,60,70,80,90):
         raise ValueError("Holding current inválido")
@@ -180,8 +175,8 @@ motors_enabled = False
 prev_start = 0
 last_send = 0.0
 
-# -------- ESTADO DE VELOCIDAD LINEAL FILTRADA --------
-v_filtered = 0.0
+# -------- VELOCIDAD LINEAL FILTRADA EN RPM --------
+v_rpm_filtered = 0.0
 
 # =====================================================
 # LOOP PRINCIPAL
@@ -207,17 +202,24 @@ try:
             factor = FAST_FACTOR
 
         # -------- LECTURA EJES --------
-        v_cmd = apply_deadzone(-joy.get_axis(1), DEADZONE)
-        w     = apply_deadzone( joy.get_axis(3)/(factor*3), DEADZONE)
+        v_cmd = apply_deadzone(-joy.get_axis(1), DEADZONE)   # [-1..1]
+        w     = apply_deadzone( joy.get_axis(3)/(factor*4), DEADZONE)
 
-        # -------- RAMPA SOLO EN VELOCIDAD LINEAL --------
+        # -------- CONSIGNA LINEAL EN RPM --------
+        v_rpm_cmd = v_cmd * MAX_RPM * factor
+
+        # -------- RAMPA ABSOLUTA EN RPM --------
         dt = SEND_PERIOD
-        max_step = LINEAR_ACCEL * dt
-        v_filtered = ramp(v_filtered, v_cmd, max_step)
+        acc_rpm = 100.0 / RPM_PER_100_TIME   # RPM/s
+        max_step = acc_rpm * dt
+
+        v_rpm_filtered = ramp(v_rpm_filtered, v_rpm_cmd, max_step)
 
         # -------- MEZCLA SKID STEERING --------
-        left  = -clamp(v_filtered + w, -1, 1) * MAX_RPM * factor
-        right =  clamp(v_filtered - w, -1, 1) * MAX_RPM * factor
+        w_rpm = w * MAX_RPM * factor
+
+        left  = -clamp(v_rpm_filtered + w_rpm, -MAX_RPM*factor, MAX_RPM*factor)
+        right =  clamp(v_rpm_filtered - w_rpm, -MAX_RPM*factor, MAX_RPM*factor)
 
         # -------- ENVÍO DE VELOCIDAD --------
         now = time.time()
