@@ -43,7 +43,7 @@ MODE_RPM = {
     1: 20,
     2: 150,
     3: 300,
-    4: 800
+    4: 500
 }
 
 current_mode = 2            # modo por defecto
