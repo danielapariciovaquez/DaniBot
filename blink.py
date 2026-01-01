@@ -5,8 +5,8 @@ import time
 GPIO.setmode(GPIO.BCM)
 
 # Definición de pines
-PIN_GPIO_3 = 25
-PIN_GPIO_15 = 24
+PIN_GPIO_3 = 24
+PIN_GPIO_15 = 23
 
 # Configuración como salidas
 GPIO.setup(PIN_GPIO_3, GPIO.OUT, initial=GPIO.LOW)
