@@ -40,10 +40,10 @@ BTN_Y = 3
 # MODOS DE VELOCIDAD (RPM MÁX)
 # =====================================================
 MODE_RPM = {
-    1: 10,
-    2: 50,
-    3: 200,
-    4: 400
+    1: 20,
+    2: 150,
+    3: 300,
+    4: 500
 }
 
 current_mode = 2            # modo por defecto
@@ -52,7 +52,7 @@ rpm_limit = MODE_RPM[current_mode]
 # =====================================================
 # ACELERACIÓN LINEAL ABSOLUTA
 # =====================================================
-RPM_PER_100_TIME = 0.25     # 100 RPM en 0.25 s
+RPM_PER_100_TIME = 0.2     # 100 RPM en 0.25 s
 
 # =====================================================
 # AUXILIARES
@@ -214,7 +214,7 @@ try:
 
         # -------- LECTURA EJES --------
         v_cmd = apply_deadzone(-joy.get_axis(1), DEADZONE)
-        w     = apply_deadzone( joy.get_axis(3)/5, DEADZONE)
+        w     = apply_deadzone( joy.get_axis(3)/(current_mode*3), DEADZONE)
 
         # -------- CONSIGNA LINEAL --------
         v_rpm_cmd = v_cmd * rpm_limit
