@@ -41,13 +41,7 @@ BTN_Y = 3
 # =====================================================
 # MODOS DE VELOCIDAD (RPM MÁX)
 # =====================================================
-MODE_RPM = {
-    1: 20,
-    2: 150,
-    3: 300,
-    4: 500
-}
-
+MODE_RPM = {1: 20, 2: 150, 3: 300, 4: 500}
 current_mode = 2
 
 # =====================================================
@@ -56,14 +50,16 @@ current_mode = 2
 RPM_PER_100_TIME = 0.2   # 100 RPM en 0.2 s
 
 # =====================================================
-# GPIO LEDS
+# GPIO LEDS (Raspberry Pi 5 compatible)
 # =====================================================
 LED_RED = 24
 LED_GREEN = 25
 
+GPIO.setwarnings(False)
+GPIO.cleanup()                 # Imprescindible en Pi 5
 GPIO.setmode(GPIO.BCM)
-GPIO.setup(LED_RED, GPIO.OUT)
-GPIO.setup(LED_GREEN, GPIO.OUT)
+GPIO.setup(LED_RED, GPIO.OUT, initial=GPIO.LOW)
+GPIO.setup(LED_GREEN, GPIO.OUT, initial=GPIO.LOW)
 
 def led_disable():
     GPIO.output(LED_RED, GPIO.HIGH)
@@ -77,6 +73,7 @@ def led_off():
     GPIO.output(LED_RED, GPIO.LOW)
     GPIO.output(LED_GREEN, GPIO.LOW)
 
+# Estado inicial seguro
 led_disable()
 
 # =====================================================
@@ -118,7 +115,6 @@ def send_speed(ser, can_id, rpm):
 
     rpm = clamp(int(rpm), 0, 3000)
     speed = rpm & 0x0FFF
-
     b2 = (direction << 7) | ((speed >> 8) & 0x0F)
     b3 = speed & 0xFF
 
@@ -140,10 +136,12 @@ def set_holding_current(ser, can_id, percent):
 # =====================================================
 def disable_all(ser):
     led_disable()
+    # Salir del modo speed
     for _ in range(2):
         for m in ALL_MOTORS:
             send_speed(ser, m, 0)
         time.sleep(0.02)
+    # Disable real
     for _ in range(2):
         for m in ALL_MOTORS:
             send_enable(ser, m, False)
@@ -196,14 +194,14 @@ joystick_ok = True
 try:
     while True:
 
-        # -------- EVENTOS (desconexión mando) --------
+        # ---- Eventos (desconexión mando) ----
         for event in pygame.event.get():
             if event.type == pygame.JOYDEVICEREMOVED:
                 joystick_ok = False
                 motors_enabled = False
                 emergency_stop(ser)
 
-        # -------- WATCHDOG --------
+        # ---- Watchdog por tiempo ----
         if joystick_ok and (time.time() - last_joy_time) > WATCHDOG_TIMEOUT:
             joystick_ok = False
             motors_enabled = False
@@ -213,7 +211,7 @@ try:
             time.sleep(0.05)
             continue
 
-        # -------- ENABLE / DISABLE --------
+        # ---- ENABLE / DISABLE ----
         start = joy.get_button(BTN_START)
         if start and not prev_start:
             motors_enabled = not motors_enabled
@@ -221,7 +219,7 @@ try:
             enable_all(ser) if motors_enabled else disable_all(ser)
         prev_start = start
 
-        # -------- CAMBIO DE MODO --------
+        # ---- Cambio de modo ----
         if joy.get_button(BTN_L1):
             if joy.get_button(BTN_A):
                 current_mode = 1
@@ -235,12 +233,12 @@ try:
         rpm_limit = MODE_RPM[current_mode]
         v_rpm_filtered = clamp(v_rpm_filtered, -rpm_limit, rpm_limit)
 
-        # -------- EJES --------
+        # ---- Ejes ----
         v_cmd = apply_deadzone(-joy.get_axis(1), DEADZONE)
         w     = apply_deadzone( joy.get_axis(3)/(current_mode*3), DEADZONE)
         last_joy_time = time.time()
 
-        # -------- RAMPA --------
+        # ---- Rampa ----
         now = time.time()
         dt = now - last_time
         last_time = now
@@ -249,12 +247,12 @@ try:
         v_rpm_cmd = v_cmd * rpm_limit
         v_rpm_filtered = ramp(v_rpm_filtered, v_rpm_cmd, acc_rpm * dt)
 
-        # -------- MEZCLA --------
+        # ---- Mezcla skid ----
         w_rpm = w * rpm_limit
         left  = -clamp(v_rpm_filtered + w_rpm, -rpm_limit, rpm_limit)
         right =  clamp(v_rpm_filtered - w_rpm, -rpm_limit, rpm_limit)
 
-        # -------- ENVÍO --------
+        # ---- Envío ----
         if motors_enabled:
             for m in MOTOR_LEFT:
                 send_speed(ser, m, left)
