@@ -1,52 +1,34 @@
-import RPi.GPIO as GPIO
+import pigpio
 import time
-
-# ==============================
-# CONFIGURACIÓN
-# ==============================
-GPIO.setmode(GPIO.BCM)
 
 PIN_24 = 24
 PIN_25 = 25
 
-PWM_FREQ = 500        # Hz
-FADE_STEP = 1         # incremento de duty (%)
-FADE_DELAY = 0.1     # segundos entre pasos
+pi = pigpio.pi()
+if not pi.connected:
+    raise RuntimeError("pigpiod no está activo")
 
-# ==============================
-# INICIALIZACIÓN GPIO
-# ==============================
-GPIO.setup(PIN_24, GPIO.OUT)
-GPIO.setup(PIN_25, GPIO.OUT)
-
-pwm24 = GPIO.PWM(PIN_24, PWM_FREQ)
-pwm25 = GPIO.PWM(PIN_25, PWM_FREQ)
-
-pwm24.start(0)
-pwm25.start(0)
+# Frecuencia PWM (Hz)
+pi.set_PWM_frequency(PIN_24, 800)
+pi.set_PWM_frequency(PIN_25, 800)
 
 try:
     while True:
-        # --------------------------
-        # FADE IN
-        # --------------------------
-        for duty in range(0, 101, FADE_STEP):
-            pwm24.ChangeDutyCycle(duty)
-            pwm25.ChangeDutyCycle(duty)
-            time.sleep(FADE_DELAY)
+        # Fade in
+        for duty in range(0, 256):
+            pi.set_PWM_dutycycle(PIN_24, duty)
+            pi.set_PWM_dutycycle(PIN_25, duty)
+            time.sleep(0.01)
 
-        # --------------------------
-        # FADE OUT
-        # --------------------------
-        for duty in range(100, -1, -FADE_STEP):
-            pwm24.ChangeDutyCycle(duty)
-            pwm25.ChangeDutyCycle(duty)
-            time.sleep(FADE_DELAY)
+        # Fade out
+        for duty in range(255, -1, -1):
+            pi.set_PWM_dutycycle(PIN_24, duty)
+            pi.set_PWM_dutycycle(PIN_25, duty)
+            time.sleep(0.01)
 
 except KeyboardInterrupt:
     pass
-
 finally:
-    pwm24.stop()
-    pwm25.stop()
-    GPIO.cleanup()
+    pi.set_PWM_dutycycle(PIN_24, 0)
+    pi.set_PWM_dutycycle(PIN_25, 0)
+    pi.stop()
