@@ -1,6 +1,7 @@
 import serial
 import time
 import pygame
+import RPi.GPIO as GPIO
 
 # =====================================================
 # CONFIGURACIÓN GENERAL
@@ -46,13 +47,38 @@ MODE_RPM = {
     4: 500
 }
 
-current_mode = 2            # modo por defecto
+current_mode = 2
 rpm_limit = MODE_RPM[current_mode]
 
 # =====================================================
 # ACELERACIÓN LINEAL ABSOLUTA
 # =====================================================
-RPM_PER_100_TIME = 0.2     # 100 RPM en 0.25 s
+RPM_PER_100_TIME = 0.2   # 100 RPM en 0.2 s
+
+# =====================================================
+# GPIO LEDS
+# =====================================================
+LED_RED = 24
+LED_GREEN = 25
+
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(LED_RED, GPIO.OUT)
+GPIO.setup(LED_GREEN, GPIO.OUT)
+
+def led_disable():
+    GPIO.output(LED_RED, GPIO.HIGH)
+    GPIO.output(LED_GREEN, GPIO.LOW)
+
+def led_enable():
+    GPIO.output(LED_RED, GPIO.LOW)
+    GPIO.output(LED_GREEN, GPIO.HIGH)
+
+def led_off():
+    GPIO.output(LED_RED, GPIO.LOW)
+    GPIO.output(LED_GREEN, GPIO.LOW)
+
+# Estado inicial: DISABLE
+led_disable()
 
 # =====================================================
 # AUXILIARES
@@ -136,6 +162,7 @@ def set_holding_current(ser, can_id, percent):
 # SECUENCIAS
 # =====================================================
 def disable_all(ser):
+    led_disable()
     for _ in range(2):
         for m in ALL_MOTORS:
             send_speed(ser, m, 0)
@@ -158,6 +185,8 @@ def enable_all(ser):
 
         send_enable(ser, m, True)
         time.sleep(0.05)
+
+    led_enable()
 
 # =====================================================
 # INIT
@@ -208,8 +237,6 @@ try:
                 current_mode = 4
 
         rpm_limit = MODE_RPM[current_mode]
-
-        # Reanclar estado interno al nuevo límite
         v_rpm_filtered = clamp(v_rpm_filtered, -rpm_limit, rpm_limit)
 
         # -------- LECTURA EJES --------
@@ -244,8 +271,13 @@ try:
 
         time.sleep(0.005)
 
+# =====================================================
+# SALIDA SEGURA
+# =====================================================
 except KeyboardInterrupt:
     print("SALIDA SEGURA")
     disable_all(ser)
+    led_off()
     ser.close()
     pygame.quit()
+    GPIO.cleanup()
