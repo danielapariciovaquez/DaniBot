@@ -1,15 +1,12 @@
 import serial
 import time
 import pygame
-import RPi.GPIO as GPIO
 
 # =====================================================
 # CONFIGURACIÓN GENERAL
 # =====================================================
 PORT = "/dev/ttyUSB0"
 SERIAL_BAUD = 2000000
-
-WATCHDOG_TIMEOUT = 0.5   # s sin mando -> EMERGENCY STOP
 
 # =====================================================
 # CONFIGURACIÓN DE CORRIENTE
@@ -29,6 +26,7 @@ ALL_MOTORS  = MOTOR_LEFT + MOTOR_RIGHT
 # =====================================================
 ACC = 0
 DEADZONE = 0.001
+SEND_PERIOD = 0.001
 
 BTN_START = 7
 BTN_L1    = 4
@@ -41,40 +39,20 @@ BTN_Y = 3
 # =====================================================
 # MODOS DE VELOCIDAD (RPM MÁX)
 # =====================================================
-MODE_RPM = {1: 20, 2: 150, 3: 300, 4: 500}
-current_mode = 2
+MODE_RPM = {
+    1: 20,
+    2: 150,
+    3: 300,
+    4: 500
+}
+
+current_mode = 2            # modo por defecto
+rpm_limit = MODE_RPM[current_mode]
 
 # =====================================================
-# ACELERACIÓN LINEAL
+# ACELERACIÓN LINEAL ABSOLUTA
 # =====================================================
-RPM_PER_100_TIME = 0.2   # 100 RPM en 0.2 s
-
-# =====================================================
-# GPIO LEDS (Raspberry Pi 5 compatible)
-# =====================================================
-LED_RED = 24
-LED_GREEN = 25
-
-GPIO.setwarnings(False)
-GPIO.cleanup()                 # Imprescindible en Pi 5
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(LED_RED, GPIO.OUT, initial=GPIO.LOW)
-GPIO.setup(LED_GREEN, GPIO.OUT, initial=GPIO.LOW)
-
-def led_disable():
-    GPIO.output(LED_RED, GPIO.HIGH)
-    GPIO.output(LED_GREEN, GPIO.LOW)
-
-def led_enable():
-    GPIO.output(LED_RED, GPIO.LOW)
-    GPIO.output(LED_GREEN, GPIO.HIGH)
-
-def led_off():
-    GPIO.output(LED_RED, GPIO.LOW)
-    GPIO.output(LED_GREEN, GPIO.LOW)
-
-# Estado inicial seguro
-led_disable()
+RPM_PER_100_TIME = 0.2     # 100 RPM en 0.25 s
 
 # =====================================================
 # AUXILIARES
@@ -104,6 +82,15 @@ def build_frame(dlc, can_id, data):
         0x55
     ])
 
+def read_raw(ser, timeout=0.04):
+    t0 = time.time()
+    buf = bytearray()
+    while time.time() - t0 < timeout:
+        if ser.in_waiting:
+            buf += ser.read(ser.in_waiting)
+        time.sleep(0.001)
+    return bytes(buf)
+
 # =====================================================
 # COMANDOS MKS
 # =====================================================
@@ -115,6 +102,7 @@ def send_speed(ser, can_id, rpm):
 
     rpm = clamp(int(rpm), 0, 3000)
     speed = rpm & 0x0FFF
+
     b2 = (direction << 7) | ((speed >> 8) & 0x0F)
     b3 = speed & 0xFF
 
@@ -123,45 +111,53 @@ def send_speed(ser, can_id, rpm):
 def send_enable(ser, can_id, enable):
     ser.write(build_frame(0xC2, can_id, [0xF3, 0x01 if enable else 0x00]))
 
+def read_enable_state(ser, can_id):
+    ser.reset_input_buffer()
+    ser.write(build_frame(0xC1, can_id, [0x3A]))
+    raw = read_raw(ser)
+    for i in range(len(raw) - 1):
+        if raw[i] == 0x3A and raw[i + 1] in (0, 1):
+            return raw[i + 1] == 1
+    return None
+
 def set_work_current(ser, can_id, ma):
     ma = clamp(int(ma), 0, 3000)
-    ser.write(build_frame(0xC3, can_id, [0x83, ma & 0xFF, (ma >> 8) & 0xFF]))
+    lo = ma & 0xFF
+    hi = (ma >> 8) & 0xFF
+    ser.write(build_frame(0xC3, can_id, [0x83, lo, hi]))
+    read_raw(ser)
 
 def set_holding_current(ser, can_id, percent):
     code = (percent // 10) - 1
     ser.write(build_frame(0xC2, can_id, [0x9B, code]))
+    read_raw(ser)
 
 # =====================================================
-# SECUENCIAS DE SEGURIDAD
+# SECUENCIAS
 # =====================================================
 def disable_all(ser):
-    led_disable()
-    # Salir del modo speed
     for _ in range(2):
         for m in ALL_MOTORS:
             send_speed(ser, m, 0)
-        time.sleep(0.02)
-    # Disable real
-    for _ in range(2):
-        for m in ALL_MOTORS:
-            send_enable(ser, m, False)
-        time.sleep(0.02)
+        time.sleep(0.03)
+
+    for m in ALL_MOTORS:
+        send_enable(ser, m, False)
+        time.sleep(0.03)
 
 def enable_all(ser):
     for m in ALL_MOTORS:
         send_enable(ser, m, False)
-        time.sleep(0.03)
+        time.sleep(0.05)
+
         set_work_current(ser, m, WORK_CURRENT_MA)
         time.sleep(0.02)
+
         set_holding_current(ser, m, HOLDING_PERCENT)
         time.sleep(0.02)
-        send_enable(ser, m, True)
-        time.sleep(0.03)
-    led_enable()
 
-def emergency_stop(ser):
-    print("EMERGENCY STOP: mando perdido")
-    disable_all(ser)
+        send_enable(ser, m, True)
+        time.sleep(0.05)
 
 # =====================================================
 # INIT
@@ -185,33 +181,14 @@ prev_start = 0
 v_rpm_filtered = 0.0
 last_time = time.time()
 
-last_joy_time = time.time()
-joystick_ok = True
-
 # =====================================================
 # LOOP PRINCIPAL
 # =====================================================
 try:
     while True:
+        pygame.event.pump()
 
-        # ---- Eventos (desconexión mando) ----
-        for event in pygame.event.get():
-            if event.type == pygame.JOYDEVICEREMOVED:
-                joystick_ok = False
-                motors_enabled = False
-                emergency_stop(ser)
-
-        # ---- Watchdog por tiempo ----
-        if joystick_ok and (time.time() - last_joy_time) > WATCHDOG_TIMEOUT:
-            joystick_ok = False
-            motors_enabled = False
-            emergency_stop(ser)
-
-        if not joystick_ok:
-            time.sleep(0.05)
-            continue
-
-        # ---- ENABLE / DISABLE ----
+        # -------- ENABLE / DISABLE --------
         start = joy.get_button(BTN_START)
         if start and not prev_start:
             motors_enabled = not motors_enabled
@@ -219,7 +196,7 @@ try:
             enable_all(ser) if motors_enabled else disable_all(ser)
         prev_start = start
 
-        # ---- Cambio de modo ----
+        # -------- CAMBIO DE MODO (L1 + BOTÓN) --------
         if joy.get_button(BTN_L1):
             if joy.get_button(BTN_A):
                 current_mode = 1
@@ -231,28 +208,34 @@ try:
                 current_mode = 4
 
         rpm_limit = MODE_RPM[current_mode]
+
+        # Reanclar estado interno al nuevo límite
         v_rpm_filtered = clamp(v_rpm_filtered, -rpm_limit, rpm_limit)
 
-        # ---- Ejes ----
+        # -------- LECTURA EJES --------
         v_cmd = apply_deadzone(-joy.get_axis(1), DEADZONE)
         w     = apply_deadzone( joy.get_axis(3)/(current_mode*3), DEADZONE)
-        last_joy_time = time.time()
 
-        # ---- Rampa ----
+        # -------- CONSIGNA LINEAL --------
+        v_rpm_cmd = v_cmd * rpm_limit
+
+        # -------- RAMPA --------
         now = time.time()
         dt = now - last_time
         last_time = now
 
         acc_rpm = 100.0 / RPM_PER_100_TIME
-        v_rpm_cmd = v_cmd * rpm_limit
-        v_rpm_filtered = ramp(v_rpm_filtered, v_rpm_cmd, acc_rpm * dt)
+        max_step = acc_rpm * dt
 
-        # ---- Mezcla skid ----
+        v_rpm_filtered = ramp(v_rpm_filtered, v_rpm_cmd, max_step)
+
+        # -------- MEZCLA SKID STEERING --------
         w_rpm = w * rpm_limit
+
         left  = -clamp(v_rpm_filtered + w_rpm, -rpm_limit, rpm_limit)
         right =  clamp(v_rpm_filtered - w_rpm, -rpm_limit, rpm_limit)
 
-        # ---- Envío ----
+        # -------- ENVÍO --------
         if motors_enabled:
             for m in MOTOR_LEFT:
                 send_speed(ser, m, left)
@@ -261,13 +244,8 @@ try:
 
         time.sleep(0.005)
 
-# =====================================================
-# SALIDA SEGURA
-# =====================================================
 except KeyboardInterrupt:
     print("SALIDA SEGURA")
     disable_all(ser)
-    led_off()
     ser.close()
     pygame.quit()
-    GPIO.cleanup()
