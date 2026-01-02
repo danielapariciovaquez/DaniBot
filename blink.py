@@ -11,7 +11,7 @@ PIN_25 = 25
 
 PWM_FREQ = 500        # Hz
 FADE_STEP = 1         # incremento de duty (%)
-FADE_DELAY = 0.01     # segundos entre pasos
+FADE_DELAY = 0.1     # segundos entre pasos
 
 # ==============================
 # INICIALIZACIÓN GPIO
