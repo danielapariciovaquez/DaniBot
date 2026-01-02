@@ -1,34 +1,52 @@
 import RPi.GPIO as GPIO
 import time
 
-# Usar numeración BCM
+# ==============================
+# CONFIGURACIÓN
+# ==============================
 GPIO.setmode(GPIO.BCM)
 
-# Definición de pines
-PIN_GPIO_3 = 24
-PIN_GPIO_15 = 23
+PIN_24 = 24
+PIN_25 = 25
 
-# Configuración como salidas
-GPIO.setup(PIN_GPIO_3, GPIO.OUT, initial=GPIO.LOW)
-GPIO.setup(PIN_GPIO_15, GPIO.OUT, initial=GPIO.LOW)
+PWM_FREQ = 500        # Hz
+FADE_STEP = 1         # incremento de duty (%)
+FADE_DELAY = 0.01     # segundos entre pasos
+
+# ==============================
+# INICIALIZACIÓN GPIO
+# ==============================
+GPIO.setup(PIN_24, GPIO.OUT)
+GPIO.setup(PIN_25, GPIO.OUT)
+
+pwm24 = GPIO.PWM(PIN_24, PWM_FREQ)
+pwm25 = GPIO.PWM(PIN_25, PWM_FREQ)
+
+pwm24.start(0)
+pwm25.start(0)
 
 try:
     while True:
-        # Encender ambos pines
-        GPIO.output(PIN_GPIO_3, GPIO.HIGH)
-        GPIO.output(PIN_GPIO_15, GPIO.HIGH)
-        time.sleep(1.0)
+        # --------------------------
+        # FADE IN
+        # --------------------------
+        for duty in range(0, 101, FADE_STEP):
+            pwm24.ChangeDutyCycle(duty)
+            pwm25.ChangeDutyCycle(duty)
+            time.sleep(FADE_DELAY)
 
-        # Apagar ambos pines
-        GPIO.output(PIN_GPIO_3, GPIO.LOW)
-        GPIO.output(PIN_GPIO_15, GPIO.LOW)
-        time.sleep(1.0)
+        # --------------------------
+        # FADE OUT
+        # --------------------------
+        for duty in range(100, -1, -FADE_STEP):
+            pwm24.ChangeDutyCycle(duty)
+            pwm25.ChangeDutyCycle(duty)
+            time.sleep(FADE_DELAY)
 
 except KeyboardInterrupt:
     pass
 
 finally:
-    # Apagar pines y liberar GPIO
-    GPIO.output(PIN_GPIO_3, GPIO.LOW)
-    GPIO.output(PIN_GPIO_15, GPIO.LOW)
+    pwm24.stop()
+    pwm25.stop()
     GPIO.cleanup()
