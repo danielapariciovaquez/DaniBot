@@ -58,8 +58,8 @@ RPM_PER_100_TIME = 0.2   # 100 RPM en 0.2 s
 # =====================================================
 # GPIO LEDS
 # =====================================================
-LED_RED = 24
-LED_GREEN = 25
+LED_RED = 23
+LED_GREEN = 24
 
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(LED_RED, GPIO.OUT)
