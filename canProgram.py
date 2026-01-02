@@ -9,6 +9,8 @@ import RPi.GPIO as GPIO
 PORT = "/dev/ttyUSB0"
 SERIAL_BAUD = 2000000
 
+WATCHDOG_TIMEOUT = 0.5   # s sin mando -> EMERGENCY STOP
+
 # =====================================================
 # CONFIGURACIÓN DE CORRIENTE
 # =====================================================
@@ -27,7 +29,6 @@ ALL_MOTORS  = MOTOR_LEFT + MOTOR_RIGHT
 # =====================================================
 ACC = 0
 DEADZONE = 0.001
-SEND_PERIOD = 0.001
 
 BTN_START = 7
 BTN_L1    = 4
@@ -48,18 +49,17 @@ MODE_RPM = {
 }
 
 current_mode = 2
-rpm_limit = MODE_RPM[current_mode]
 
 # =====================================================
-# ACELERACIÓN LINEAL ABSOLUTA
+# ACELERACIÓN LINEAL
 # =====================================================
 RPM_PER_100_TIME = 0.2   # 100 RPM en 0.2 s
 
 # =====================================================
 # GPIO LEDS
 # =====================================================
-LED_RED = 23
-LED_GREEN = 24
+LED_RED = 24
+LED_GREEN = 25
 
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(LED_RED, GPIO.OUT)
@@ -77,7 +77,6 @@ def led_off():
     GPIO.output(LED_RED, GPIO.LOW)
     GPIO.output(LED_GREEN, GPIO.LOW)
 
-# Estado inicial: DISABLE
 led_disable()
 
 # =====================================================
@@ -108,15 +107,6 @@ def build_frame(dlc, can_id, data):
         0x55
     ])
 
-def read_raw(ser, timeout=0.04):
-    t0 = time.time()
-    buf = bytearray()
-    while time.time() - t0 < timeout:
-        if ser.in_waiting:
-            buf += ser.read(ser.in_waiting)
-        time.sleep(0.001)
-    return bytes(buf)
-
 # =====================================================
 # COMANDOS MKS
 # =====================================================
@@ -137,56 +127,43 @@ def send_speed(ser, can_id, rpm):
 def send_enable(ser, can_id, enable):
     ser.write(build_frame(0xC2, can_id, [0xF3, 0x01 if enable else 0x00]))
 
-def read_enable_state(ser, can_id):
-    ser.reset_input_buffer()
-    ser.write(build_frame(0xC1, can_id, [0x3A]))
-    raw = read_raw(ser)
-    for i in range(len(raw) - 1):
-        if raw[i] == 0x3A and raw[i + 1] in (0, 1):
-            return raw[i + 1] == 1
-    return None
-
 def set_work_current(ser, can_id, ma):
     ma = clamp(int(ma), 0, 3000)
-    lo = ma & 0xFF
-    hi = (ma >> 8) & 0xFF
-    ser.write(build_frame(0xC3, can_id, [0x83, lo, hi]))
-    read_raw(ser)
+    ser.write(build_frame(0xC3, can_id, [0x83, ma & 0xFF, (ma >> 8) & 0xFF]))
 
 def set_holding_current(ser, can_id, percent):
     code = (percent // 10) - 1
     ser.write(build_frame(0xC2, can_id, [0x9B, code]))
-    read_raw(ser)
 
 # =====================================================
-# SECUENCIAS
+# SECUENCIAS DE SEGURIDAD
 # =====================================================
 def disable_all(ser):
     led_disable()
     for _ in range(2):
         for m in ALL_MOTORS:
             send_speed(ser, m, 0)
-        time.sleep(0.03)
-
-    for m in ALL_MOTORS:
-        send_enable(ser, m, False)
-        time.sleep(0.03)
+        time.sleep(0.02)
+    for _ in range(2):
+        for m in ALL_MOTORS:
+            send_enable(ser, m, False)
+        time.sleep(0.02)
 
 def enable_all(ser):
     for m in ALL_MOTORS:
         send_enable(ser, m, False)
-        time.sleep(0.05)
-
+        time.sleep(0.03)
         set_work_current(ser, m, WORK_CURRENT_MA)
         time.sleep(0.02)
-
         set_holding_current(ser, m, HOLDING_PERCENT)
         time.sleep(0.02)
-
         send_enable(ser, m, True)
-        time.sleep(0.05)
-
+        time.sleep(0.03)
     led_enable()
+
+def emergency_stop(ser):
+    print("EMERGENCY STOP: mando perdido")
+    disable_all(ser)
 
 # =====================================================
 # INIT
@@ -210,12 +187,31 @@ prev_start = 0
 v_rpm_filtered = 0.0
 last_time = time.time()
 
+last_joy_time = time.time()
+joystick_ok = True
+
 # =====================================================
 # LOOP PRINCIPAL
 # =====================================================
 try:
     while True:
-        pygame.event.pump()
+
+        # -------- EVENTOS (desconexión mando) --------
+        for event in pygame.event.get():
+            if event.type == pygame.JOYDEVICEREMOVED:
+                joystick_ok = False
+                motors_enabled = False
+                emergency_stop(ser)
+
+        # -------- WATCHDOG --------
+        if joystick_ok and (time.time() - last_joy_time) > WATCHDOG_TIMEOUT:
+            joystick_ok = False
+            motors_enabled = False
+            emergency_stop(ser)
+
+        if not joystick_ok:
+            time.sleep(0.05)
+            continue
 
         # -------- ENABLE / DISABLE --------
         start = joy.get_button(BTN_START)
@@ -225,7 +221,7 @@ try:
             enable_all(ser) if motors_enabled else disable_all(ser)
         prev_start = start
 
-        # -------- CAMBIO DE MODO (L1 + BOTÓN) --------
+        # -------- CAMBIO DE MODO --------
         if joy.get_button(BTN_L1):
             if joy.get_button(BTN_A):
                 current_mode = 1
@@ -239,12 +235,10 @@ try:
         rpm_limit = MODE_RPM[current_mode]
         v_rpm_filtered = clamp(v_rpm_filtered, -rpm_limit, rpm_limit)
 
-        # -------- LECTURA EJES --------
+        # -------- EJES --------
         v_cmd = apply_deadzone(-joy.get_axis(1), DEADZONE)
-        w     = apply_deadzone( joy.get_axis(3)/(current_mode*2), DEADZONE)
-
-        # -------- CONSIGNA LINEAL --------
-        v_rpm_cmd = v_cmd * rpm_limit
+        w     = apply_deadzone( joy.get_axis(3)/(current_mode*3), DEADZONE)
+        last_joy_time = time.time()
 
         # -------- RAMPA --------
         now = time.time()
@@ -252,13 +246,11 @@ try:
         last_time = now
 
         acc_rpm = 100.0 / RPM_PER_100_TIME
-        max_step = acc_rpm * dt
+        v_rpm_cmd = v_cmd * rpm_limit
+        v_rpm_filtered = ramp(v_rpm_filtered, v_rpm_cmd, acc_rpm * dt)
 
-        v_rpm_filtered = ramp(v_rpm_filtered, v_rpm_cmd, max_step)
-
-        # -------- MEZCLA SKID STEERING --------
+        # -------- MEZCLA --------
         w_rpm = w * rpm_limit
-
         left  = -clamp(v_rpm_filtered + w_rpm, -rpm_limit, rpm_limit)
         right =  clamp(v_rpm_filtered - w_rpm, -rpm_limit, rpm_limit)
 
