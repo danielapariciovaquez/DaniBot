@@ -52,7 +52,7 @@ rpm_limit = MODE_RPM[current_mode]
 # =====================================================
 # ACELERACIÓN LINEAL ABSOLUTA
 # =====================================================
-RPM_PER_100_TIME = 0.3     # 100 RPM en 0.25 s
+RPM_PER_100_TIME = 0.2     # 100 RPM en 0.25 s
 
 # =====================================================
 # AUXILIARES
@@ -213,7 +213,7 @@ try:
         v_rpm_filtered = clamp(v_rpm_filtered, -rpm_limit, rpm_limit)
 
         # -------- LECTURA EJES --------
-        v_cmd = apply_deadzone(-joy.get_axis(1), DEADZONE)
+        v_cmd = apply_deadzone( joy.get_axis(1), DEADZONE)
         w     = apply_deadzone( joy.get_axis(3)/(current_mode*3), DEADZONE)
 
         # -------- CONSIGNA LINEAL --------
