@@ -25,7 +25,7 @@ ALL_MOTORS  = MOTOR_LEFT + MOTOR_RIGHT
 # CONTROL
 # =====================================================
 ACC = 0
-DEADZONE = 0.001
+DEADZONE = 0.004
 SEND_PERIOD = 0.001
 
 BTN_START = 11
