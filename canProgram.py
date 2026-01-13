@@ -25,7 +25,7 @@ ALL_MOTORS  = MOTOR_LEFT + MOTOR_RIGHT
 # CONTROL
 # =====================================================
 ACC = 0
-DEADZONE = 0.002
+DEADZONE = 0.004
 SEND_PERIOD = 0.001
 
 BTN_START = 11
@@ -52,7 +52,7 @@ rpm_limit = MODE_RPM[current_mode]
 # =====================================================
 # ACELERACIÓN LINEAL ABSOLUTA
 # =====================================================
-RPM_PER_100_TIME = 1    # 100 RPM en 0.25 s
+RPM_PER_100_TIME = 2    # 100 RPM en 0.25 s
 
 # =====================================================
 # AUXILIARES
