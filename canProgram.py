@@ -25,7 +25,7 @@ ALL_MOTORS  = MOTOR_LEFT + MOTOR_RIGHT
 # CONTROL
 # =====================================================
 ACC = 0
-DEADZONE = 0.001
+DEADZONE = 0.005
 SEND_PERIOD = 0.001
 
 BTN_START = 11
@@ -213,7 +213,7 @@ try:
         v_rpm_filtered = clamp(v_rpm_filtered, -rpm_limit, rpm_limit)
 
         # -------- LECTURA EJES --------
-        v_cmd = apply_deadzone( joy.get_axis(1), DEADZONE)+0.004
+        v_cmd = apply_deadzone( joy.get_axis(1), DEADZONE)
         w     = apply_deadzone( joy.get_axis(2)/(current_mode*2), DEADZONE)
 
         # -------- CONSIGNA LINEAL --------
