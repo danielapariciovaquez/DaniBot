@@ -28,13 +28,13 @@ ACC = 0
 DEADZONE = 0.004
 SEND_PERIOD = 0.001
 
-BTN_START = 11
-BTN_L1    = 6
+BTN_START = 7
+BTN_L1    = 4
 
 BTN_A = 0
 BTN_B = 1
-BTN_X = 3
-BTN_Y = 4
+BTN_X = 2
+BTN_Y = 3
 
 # =====================================================
 # MODOS DE VELOCIDAD (RPM MÁX)
@@ -214,7 +214,7 @@ try:
 
         # -------- LECTURA EJES --------
         v_cmd = apply_deadzone( joy.get_axis(1), DEADZONE)
-        w     = apply_deadzone( joy.get_axis(2)/(current_mode*2), DEADZONE)
+        w     = apply_deadzone( joy.get_axis(3)/(current_mode*2), DEADZONE)
 
         # -------- CONSIGNA LINEAL --------
         v_rpm_cmd = v_cmd * rpm_limit
