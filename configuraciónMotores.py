@@ -2,10 +2,14 @@
 import time
 import threading
 from collections import deque
-from typing import Optional, Tuple
+from typing import Optional
 
 from flask import Flask, request, jsonify, Response
 import serial
+
+# (Opcional) Algunos adaptadores RS485 requieren control RTS para DE/RE.
+# Descomenta si sospechas que tu adaptador no conmuta automáticamente.
+# from serial.rs485 import RS485Settings
 
 # =========================
 # CONFIG RS485
@@ -17,23 +21,26 @@ ADDR = 0x01
 # =========================
 # CONTROL DEFAULTS
 # =========================
-# F5 (posición) requiere speed y acc en la trama; aquí se fijan.
+# F5 (posición) requiere speed y acc en la trama.
 POS_SPEED_RPM = 300   # 0..3000
 POS_ACC = 2           # 0..255
+
+# F6 (velocidad) usa ACC; lo fijamos.
+SPD_ACC = 2           # 0..255
 
 # Encoder multi-turn: 16384 counts / vuelta
 COUNTS_PER_TURN = 16384
 
 # =========================
-# Estado global simple
+# Estado global
 # =========================
 state_lock = threading.Lock()
-mode = "speed"        # "speed" o "position"
-setpoint = 0          # rpm signed si speed, grados si position
+mode = "speed"   # "speed" o "position"
+setpoint = 0     # rpm signed si speed, grados si position
 pid = {"kp": 220, "ki": 100, "kd": 270, "kv": 320}
 
 log_lock = threading.Lock()
-log_buf = deque(maxlen=300)  # consola web
+log_buf = deque(maxlen=400)
 
 ser_lock = threading.Lock()
 ser: Optional[serial.Serial] = None
@@ -41,17 +48,19 @@ ser: Optional[serial.Serial] = None
 app = Flask(__name__)
 
 # =========================
-# Utilidades protocolo MKS
+# Protocolo MKS: CHECKSUM8
 # =========================
-def log(msg: str):
-    with log_lock:
-        ts = time.strftime("%H:%M:%S")
-        log_buf.append(f"[{ts}] {msg}")
-
 def checksum8(payload: bytes) -> int:
+    """
+    CHECKSUM 8-bit = sum(all bytes) & 0xFF
+    (No CRC16, no XOR, no complementos)
+    """
     return sum(payload) & 0xFF
 
 def frame_down(addr: int, code: int, data: bytes = b"") -> bytes:
+    """
+    Downlink: FA addr code data... checksum8
+    """
     base = bytes([0xFA, addr & 0xFF, code & 0xFF]) + data
     return base + bytes([checksum8(base)])
 
@@ -62,33 +71,51 @@ def i32_be(v: int) -> bytes:
     return int(v).to_bytes(4, "big", signed=True)
 
 def degrees_to_axis(deg: int) -> int:
-    return int(round(deg * COUNTS_PER_TURN / 360.0))
+    return int(round(int(deg) * COUNTS_PER_TURN / 360.0))
 
 def hexs(b: bytes) -> str:
     return " ".join(f"{x:02X}" for x in b)
 
+def log(msg: str):
+    with log_lock:
+        ts = time.strftime("%H:%M:%S")
+        log_buf.append(f"[{ts}] {msg}")
+
+# =========================
+# Serie
+# =========================
 def ensure_serial_open():
     global ser
     with ser_lock:
         if ser and ser.is_open:
             return
+
         ser = serial.Serial(
             port=PORT,
             baudrate=BAUDRATE,
             bytesize=serial.EIGHTBITS,
             parity=serial.PARITY_NONE,
             stopbits=serial.STOPBITS_ONE,
-            timeout=0.2,
-            write_timeout=0.2,
+            timeout=0.25,
+            write_timeout=0.25,
         )
+
+        # Si tu adaptador necesita RTS/DE:
+        # ser.rs485_mode = RS485Settings(
+        #     rts_level_for_tx=True,
+        #     rts_level_for_rx=False,
+        #     delay_before_tx=0.001,
+        #     delay_before_rx=0.001
+        # )
+
     log(f"INFO: Puerto abierto {PORT} @ {BAUDRATE}")
-    # Enable bus control
+    # Enable bus control al arrancar
     send_enable(True)
 
 def serial_txrx(tx: bytes, rx_len: int = 5) -> bytes:
     """
-    Muchos comandos 'set' responden con: FB addr code status CRC (5 bytes).
-    Si tu configuración no responde, RX puede ser vacío.
+    Envía una trama y lee respuesta (si existe).
+    Muchas respuestas de 'set' son 5 bytes: FB addr code status checksum.
     """
     ensure_serial_open()
     with ser_lock:
@@ -97,30 +124,32 @@ def serial_txrx(tx: bytes, rx_len: int = 5) -> bytes:
             ser.reset_input_buffer()
         except Exception:
             pass
-        ser.write(tx)     # enviar trama completa
+
+        ser.write(tx)   # IMPORTANTE: trama completa, sin trocear
         ser.flush()
+
         rx = ser.read(rx_len) if rx_len else b""
+
     log(f"TX: {hexs(tx)}")
     log(f"RX: {hexs(rx) if rx else '(sin respuesta)'}")
     return rx
 
 # =========================
-# Comandos MKS
+# Comandos SERVO42D
 # =========================
 def send_enable(en: bool):
     tx = frame_down(ADDR, 0xF3, bytes([0x01 if en else 0x00]))
     serial_txrx(tx, rx_len=5)
 
 def send_pid_vfoc(kp: int, ki: int, kd: int, kv: int):
-    # 96h: PID vFOC: Kp Ki Kd Kv como uint16 big-endian
+    # 96h: PID vFOC: 4x uint16 big-endian
     data = u16_be(kp) + u16_be(ki) + u16_be(kd) + u16_be(kv)
     tx = frame_down(ADDR, 0x96, data)
     serial_txrx(tx, rx_len=5)
 
-def send_speed_f6(rpm_signed: int, acc: int = 2):
+def send_speed_f6(rpm_signed: int):
     # F6: speed mode. Signo -> DIR bit7
     rpm_signed = int(rpm_signed)
-    acc = max(0, min(255, int(acc)))
 
     if rpm_signed < 0:
         direction = 1
@@ -130,23 +159,28 @@ def send_speed_f6(rpm_signed: int, acc: int = 2):
         speed = rpm_signed
 
     speed = max(0, min(3000, int(speed)))
+    acc = max(0, min(255, int(SPD_ACC)))
+
     byte4 = ((direction & 0x01) << 7) | ((speed >> 8) & 0x0F)
     byte5 = speed & 0xFF
 
     tx = frame_down(ADDR, 0xF6, bytes([byte4, byte5, acc]))
     serial_txrx(tx, rx_len=5)
 
-def send_position_f5(degrees: int, speed_rpm: int, acc: int):
+def send_position_f5(deg: int):
     # F5: position mode4 absAxis
-    degrees = int(degrees)
-    speed_rpm = max(0, min(3000, int(speed_rpm)))
-    acc = max(0, min(255, int(acc)))
+    deg = int(deg)
+    deg = max(-360, min(360, deg))
 
-    axis = degrees_to_axis(degrees)
-    data = u16_be(speed_rpm) + bytes([acc]) + i32_be(axis)
+    speed = max(0, min(3000, int(POS_SPEED_RPM)))
+    acc = max(0, min(255, int(POS_ACC)))
+
+    axis = degrees_to_axis(deg)
+    data = u16_be(speed) + bytes([acc]) + i32_be(axis)
+
     tx = frame_down(ADDR, 0xF5, data)
     serial_txrx(tx, rx_len=5)
-    log(f"INFO: angle={degrees}° -> absAxis={axis} (16384/turn)")
+    log(f"INFO: F5 angle={deg}° -> absAxis={axis} (16384/turn), speed={speed}, acc={acc}")
 
 # =========================
 # API
@@ -163,6 +197,7 @@ def api_status():
             "pid": dict(pid),
             "pos_speed_rpm": POS_SPEED_RPM,
             "pos_acc": POS_ACC,
+            "spd_acc": SPD_ACC,
         }
     return jsonify(st)
 
@@ -178,7 +213,6 @@ def api_mode():
     m = data.get("mode")
     if m not in ("speed", "position"):
         return jsonify({"ok": False, "error": "mode must be 'speed' or 'position'"}), 400
-
     with state_lock:
         mode = m
     log(f"INFO: Modo -> {mode}")
@@ -191,25 +225,28 @@ def api_setpoint():
     value = data.get("value", 0)
 
     with state_lock:
-        sp_mode = mode
-        # Validación rangos exactos que pediste:
-        if sp_mode == "speed":
+        m = mode
+        if m == "speed":
             v = int(value)
             if v < -100 or v > 100:
-                return jsonify({"ok": False, "error": "speed setpoint out of range (-100..100)"}), 400
+                return jsonify({"ok": False, "error": "speed out of range (-100..100)"}), 400
             setpoint = v
         else:
             v = int(value)
             if v < -360 or v > 360:
-                return jsonify({"ok": False, "error": "position setpoint out of range (-360..360)"}), 400
+                return jsonify({"ok": False, "error": "position out of range (-360..360)"}), 400
             setpoint = v
 
-    # Enviar inmediatamente según modo
-    ensure_serial_open()
-    if sp_mode == "speed":
-        send_speed_f6(setpoint, acc=2)
-    else:
-        send_position_f5(setpoint, speed_rpm=POS_SPEED_RPM, acc=POS_ACC)
+    # Enviar inmediatamente
+    try:
+        ensure_serial_open()
+        if m == "speed":
+            send_speed_f6(setpoint)
+        else:
+            send_position_f5(setpoint)
+    except Exception as e:
+        log(f"ERROR: setpoint send failed: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
     return jsonify({"ok": True})
 
@@ -225,7 +262,6 @@ def api_pid():
     except Exception:
         return jsonify({"ok": False, "error": "invalid pid values"}), 400
 
-    # Rango típico del manual para PID: 0..1024 (sin asumir más)
     for name, val in (("kp", kp), ("ki", ki), ("kd", kd), ("kv", kv)):
         if val < 0 or val > 1024:
             return jsonify({"ok": False, "error": f"{name} out of range (0..1024)"}), 400
@@ -233,12 +269,17 @@ def api_pid():
     with state_lock:
         pid = {"kp": kp, "ki": ki, "kd": kd, "kv": kv}
 
-    ensure_serial_open()
-    send_pid_vfoc(kp, ki, kd, kv)
+    try:
+        ensure_serial_open()
+        send_pid_vfoc(kp, ki, kd, kv)
+    except Exception as e:
+        log(f"ERROR: pid send failed: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
     return jsonify({"ok": True})
 
 # =========================
-# WEB UI
+# Web UI
 # =========================
 HTML = r"""
 <!doctype html>
@@ -293,7 +334,7 @@ HTML = r"""
       <div id="spLabel" class="label"><span>—</span><span id="spVal">—</span></div>
       <input id="spSlider" class="slider" type="range" min="-100" max="100" step="1" value="0"/>
       <div class="muted">
-        En Velocidad: -100..+100 RPM (F6). En Posición: -360..+360° (F5).
+        Velocidad: -100..+100 RPM (F6). Posición: -360..+360° (F5).
       </div>
     </div>
   </div>
@@ -432,7 +473,6 @@ window.addEventListener("load", async () => {
     await refreshLog();
   });
 
-  // refresco periódico de consola
   setInterval(refreshLog, 700);
   await refreshLog();
 });
@@ -445,16 +485,11 @@ window.addEventListener("load", async () => {
 def index():
     return Response(HTML, mimetype="text/html")
 
-# =========================
-# Arranque
-# =========================
 if __name__ == "__main__":
-    # Abre puerto al arrancar y habilita
     try:
         ensure_serial_open()
     except Exception as e:
-        log(f"ERROR: no se pudo abrir puerto serie: {e}")
+        log(f"ERROR: no se pudo abrir {PORT}: {e}")
 
-    # Servidor accesible en red local
-    log("INFO: Servidor web iniciado (http://0.0.0.0:5000)")
+    log("INFO: Servidor web iniciado en http://0.0.0.0:5000")
     app.run(host="0.0.0.0", port=5000, debug=False)
