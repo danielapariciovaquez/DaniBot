@@ -8,28 +8,25 @@ PORT = "/dev/ttyUSB0"
 BAUDRATE = 38400
 ADDR = 0x01
 
-RX_LEN = 64          # lee hasta 64 bytes (ajustable)
-TIMEOUT_S = 0.3      # timeout de lectura
-
-def checksum8(frame_wo_chk):
-    return sum(frame_wo_chk) & 0xFF
-
-def build_frame(cmd, data):
-    frame = [0xFA, ADDR & 0xFF, cmd & 0xFF] + [x & 0xFF for x in data]
-    frame.append(checksum8(frame))
-    return bytes(frame)
+TIMEOUT_S = 0.3
+READ_CHUNK = 64
+MAX_WAIT_S = 1.0
 
 def hx(b: bytes) -> str:
     return " ".join(f"{x:02X}" for x in b)
 
+def checksum8(data: bytes) -> int:
+    return sum(data) & 0xFF
+
 def main():
     # ============================================================
-    # TODO: rellena esto con el comando real de "consulta posición"
+    # PON AQUÍ el comando real que ya te está respondiendo
     # ============================================================
-    CMD_READ_POS = 0x00         # <-- CAMBIAR
-    DATA = []                  # <-- CAMBIAR (si aplica)
+    CMD_READ_POS = 0x00   # <-- CAMBIAR por el CMD que usas
+    DATA = []            # <-- CAMBIAR si tu consulta lleva payload
 
-    tx = build_frame(CMD_READ_POS, DATA)
+    tx_wo = bytes([0xFA, ADDR & 0xFF, CMD_READ_POS & 0xFF] + [x & 0xFF for x in DATA])
+    tx = tx_wo + bytes([checksum8(tx_wo)])
 
     print(f"Opening {PORT} @ {BAUDRATE} ...")
     with serial.Serial(PORT, BAUDRATE, timeout=TIMEOUT_S, write_timeout=TIMEOUT_S) as ser:
@@ -39,26 +36,39 @@ def main():
         ser.write(tx)
         ser.flush()
 
-        # Lee “lo que llegue” hasta timeout. Una lectura puede traer parcial, así que acumulamos.
         t0 = time.time()
         rx_acc = bytearray()
+
         while True:
-            chunk = ser.read(RX_LEN)
+            chunk = ser.read(READ_CHUNK)
             if chunk:
                 rx_acc.extend(chunk)
-                # Si dejan de llegar bytes, salimos tras un pequeño margen
-                # (para no quedarnos esperando infinitamente si la respuesta es corta).
-                if len(chunk) < RX_LEN:
+                # si llega menos de READ_CHUNK, normalmente ya no hay más
+                if len(chunk) < READ_CHUNK:
                     break
             else:
                 break
-            if (time.time() - t0) > 1.0:
+
+            if (time.time() - t0) > MAX_WAIT_S:
                 break
 
-        if rx_acc:
-            print("RX:", hx(bytes(rx_acc)))
-        else:
+        rx = bytes(rx_acc)
+        if not rx:
             print("RX: (vacío)")
+            return
+
+        print(f"RX ({len(rx)} bytes):", hx(rx))
+
+        # Inspección mínima (sin asumir estructura)
+        print("RX[0:4]:", hx(rx[:4]))
+        if len(rx) >= 2:
+            print(f"Byte0=0x{rx[0]:02X}, Byte1=0x{rx[1]:02X}")
+
+        # Chequeo hipotético de checksum8 al final
+        if len(rx) >= 2:
+            calc = checksum8(rx[:-1])
+            last = rx[-1]
+            print(f"Checksum8 hipotético: calc=0x{calc:02X} last=0x{last:02X} match={calc==last}")
 
 if __name__ == "__main__":
     main()
